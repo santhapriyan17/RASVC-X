@@ -32,10 +32,9 @@ from rasvcx.validation.validation_types import (
 # as two separate numbers sharing a unit; the range-hyphen itself is not
 # consumed by this pattern so both endpoints are extracted independently.
 _NUMBER_RE = re.compile(
-    r"(?P<value>-?\d+(?:\.\d+)?)\s*(?P<unit>%|mcg|mg|ml|g|kg|iu|units?|mmol|mol)?\b",
+    r"(?P<value>-?\d+(?:\.\d+)?)\s*(?P<unit>%|mcg|mg|ml|g|kg|iu|units?|mmol|mol)?(?!\w)",
     re.IGNORECASE,
 )
-
 # A 4-digit year, used as a light-weight temporal signal distinct from full
 # date parsing (that lives in provenance/context_extractor.py and operates
 # on Provenance.date, not on claim text).
