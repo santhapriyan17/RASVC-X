@@ -1,0 +1,6 @@
+DRUG: CARVEDILOL
+Dose: 3.125mg–25mg BD
+Indication: HF
+Adverse effects: Hypotension, dizziness
+Category: Prescription Medicine
+Review date: 2024-01

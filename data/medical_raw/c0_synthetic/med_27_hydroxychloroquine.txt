@@ -1,0 +1,6 @@
+DRUG: HYDROXYCHLOROQUINE
+Dose: 200mg–400mg daily
+Indication: RA/SLE
+Adverse effects: Retinopathy screening
+Category: Prescription Medicine
+Review date: 2024-01

@@ -1,0 +1,22 @@
+# Keep secrets, local state and dependency trees out of the build context.
+.env
+.env.*
+!.env.example
+.git
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.runtime
+data
+corpus
+models
+logs
+eval_output
+frontend/node_modules
+frontend/dist
+tests
+benchmarks
+evaluation
+docs

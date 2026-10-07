@@ -1,0 +1,6 @@
+DRUG: APIXABAN
+Dose: 2.5mg–5mg BD
+Indication: AF/VTE
+Adverse effects: Bleeding; no routine monitoring
+Category: Prescription Medicine
+Review date: 2024-01

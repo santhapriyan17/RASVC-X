@@ -1,0 +1,6 @@
+DRUG: BISOPROLOL
+Dose: 1.25mg–10mg daily
+Indication: HF/HTN
+Adverse effects: Bradycardia, bronchospasm
+Category: Prescription Medicine
+Review date: 2024-01

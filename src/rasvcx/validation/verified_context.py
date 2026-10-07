@@ -52,6 +52,10 @@ class ValidationSummary:
     validation_results: dict[CandidateId, ValidationResult]
     resolutions: list[EvidenceRelationshipResult]
     nli_calls_used: int
+    nli_failures: int = 0
+    """Pairs the router escalated to NLI for which the backend produced no
+    signal (unavailable, errored).  Those pairs fell back to the contextual
+    result; this count makes that degradation visible to the caller."""
 
     @property
     def unresolved_count(self) -> int:
@@ -115,6 +119,7 @@ class ValidationPipeline:
         validation_results: dict[CandidateId, ValidationResult] = {}
         resolutions: list[EvidenceRelationshipResult] = []
         nli_calls_used = 0
+        nli_failures = 0
 
         deterministic_elapsed = 0.0
         contextual_elapsed = 0.0
@@ -158,6 +163,8 @@ class ValidationPipeline:
                 if nli_result is not None:
                     nli_calls_used += 1
                     bundle.record_nli_calls(1)
+                else:
+                    nli_failures += 1
 
             final_result = self._select_final_result(
                 decision.action, deterministic_result, contextual_result, nli_result
@@ -190,6 +197,7 @@ class ValidationPipeline:
             validation_results=validation_results,
             resolutions=resolutions,
             nli_calls_used=nli_calls_used,
+            nli_failures=nli_failures,
         )
 
     # -- internal helpers -----------------------------------------------

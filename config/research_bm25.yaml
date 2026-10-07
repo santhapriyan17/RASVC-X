@@ -1,0 +1,19 @@
+execution_mode: research_bm25
+
+retrieval:
+  mode: bm25_only
+
+reranker:
+  enabled: true
+  device: cpu
+
+nli:
+  enabled: true
+  device: cpu
+
+sufficiency:
+  min_scored_items: 1
+
+llm:
+  provider: gemini
+  model_name: gemini-3.5-flash-lite

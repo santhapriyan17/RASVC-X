@@ -120,14 +120,60 @@ def test_contradiction_with_unknown_context_is_unresolved_not_genuine_conflict()
     assert result.confidence <= 0.5
 
 
-def test_temporal_divergence_is_temporal_diff():
+def _dated_pair(lc_a=None, lc_b=None):
+    import dataclasses
+    from rasvcx.schemas.evidence import SourceLifecycle, SourceRef
+
     prov_a = Provenance(source_type=SourceType.DRUG_LABEL, date="2015-01-01", jurisdiction="US",
                          population="adults", dosage_context="general")
     prov_b = Provenance(source_type=SourceType.DRUG_LABEL, date="2023-01-01", jurisdiction="US",
                          population="adults", dosage_context="general")
     bundle = _bundle(prov_a, prov_b)
-    det = _result(ValidationStage.DETERMINISTIC, ValidationLabel.CONTRADICTION, 0.9)
-    result = EvidenceResolver().resolve(bundle, "cand1", EvidenceItemId("e1"), EvidenceItemId("e2"), det, None, None)
+    for iid, lc in (("e1", lc_a), ("e2", lc_b)):
+        if lc is not None:
+            it = bundle.evidence_items[EvidenceItemId(iid)]
+            bundle.evidence_items[EvidenceItemId(iid)] = dataclasses.replace(
+                it, source=SourceRef(doc_id=f"doc_{iid}", lifecycle=SourceLifecycle(**lc)))
+    return bundle
+
+
+def _resolve(bundle, label=ValidationLabel.CONTRADICTION):
+    det = _result(ValidationStage.DETERMINISTIC, label, 0.9)
+    return EvidenceResolver().resolve(bundle, "cand1", EvidenceItemId("e1"), EvidenceItemId("e2"), det, None, None)
+
+
+def test_temporal_divergence_alone_does_not_resolve_a_contradiction():
+    # Recency is not evidence of supersession: an 8-year gap with no declared
+    # lifecycle is an UNRESOLVED contradiction (formerly TEMPORAL_DIFF).
+    result = _resolve(_dated_pair())
+    assert result.relationship is EvidenceRelationship.UNRESOLVED
+    assert "no source declares supersession" in result.rationale
+
+
+def test_declared_superseded_source_resolves_as_temporal_diff():
+    result = _resolve(_dated_pair(lc_a={"status": "superseded", "superseded_by": "doc_e2"},
+                                  lc_b={"status": "current"}))
+    assert result.relationship is EvidenceRelationship.TEMPORAL_DIFF
+    assert "resolved by declared lifecycle: e1 is superseded" in result.rationale
+
+
+def test_withdrawn_source_resolves_as_temporal_diff():
+    result = _resolve(_dated_pair(lc_a={"status": "withdrawn"}))
+    assert result.relationship is EvidenceRelationship.TEMPORAL_DIFF
+
+
+def test_two_current_sources_that_disagree_are_a_genuine_conflict():
+    result = _resolve(_dated_pair(lc_a={"status": "current"}, lc_b={"status": "current"}))
+    assert result.relationship is EvidenceRelationship.GENUINE_CONFLICT
+
+
+def test_two_stale_sources_are_not_resolved_by_lifecycle():
+    result = _resolve(_dated_pair(lc_a={"status": "withdrawn"}, lc_b={"status": "historical"}))
+    assert result.relationship is EvidenceRelationship.UNRESOLVED
+
+
+def test_temporal_divergence_without_disagreement_is_benign_temporal_diff():
+    result = _resolve(_dated_pair(), label=ValidationLabel.SUPPORTED)
     assert result.relationship is EvidenceRelationship.TEMPORAL_DIFF
 
 

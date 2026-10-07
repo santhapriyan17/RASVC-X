@@ -43,6 +43,84 @@ class Provenance:
     dosage_context: str | Unknown
 
 
+#: Declared lifecycle status of a source document (knowledge-plane metadata).
+LIFECYCLE_STATUSES = ("current", "superseded", "historical", "withdrawn")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceLifecycle:
+    """Document lifecycle as DECLARED by whoever registered the source.
+
+    Temporal evidence states (CURRENT / SUPERSEDED / HISTORICAL / WITHDRAWN)
+    are derived only from these declarations -- never guessed from a
+    publication date or from the document text.  None = not declared.
+
+      status          one of LIFECYCLE_STATUSES
+      effective_date  ISO date the content takes effect
+      superseded_by   doc_id of the document that replaces this one
+      supersedes      doc_ids this document replaces
+      version         publisher's version label
+    """
+
+    status: str | None = None
+    effective_date: str | None = None
+    superseded_by: str | None = None
+    supersedes: tuple[str, ...] = ()
+    version: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status is not None and self.status not in LIFECYCLE_STATUSES:
+            raise ValueError(
+                f"SourceLifecycle.status must be one of {LIFECYCLE_STATUSES}, got {self.status!r}"
+            )
+
+    def to_record(self) -> dict[str, object]:
+        return {
+            "status": self.status, "effective_date": self.effective_date,
+            "superseded_by": self.superseded_by, "supersedes": list(self.supersedes),
+            "version": self.version,
+        }
+
+    @classmethod
+    def from_record(cls, rec: object) -> "SourceLifecycle | None":
+        """Parse a record's lifecycle block; None when nothing is declared."""
+        if not isinstance(rec, dict):
+            return None
+
+        def _s(key: str) -> str | None:
+            v = rec.get(key)
+            return str(v).strip() or None if v not in (None, "") else None
+
+        raw_sup = rec.get("supersedes") or ()
+        supersedes = tuple(str(s).strip() for s in (raw_sup if isinstance(raw_sup, (list, tuple)) else [raw_sup]) if str(s).strip())
+        status = _s("status")
+        lc = cls(
+            status=status.lower() if status else None,
+            effective_date=_s("effective_date"), superseded_by=_s("superseded_by"),
+            supersedes=supersedes, version=_s("version"),
+        )
+        return None if lc == cls() else lc
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRef:
+    """Where an evidence chunk came from inside the knowledge base.
+
+    Attribution metadata (document identity and location) plus the
+    document's declared lifecycle.  Contextual semantics live in
+    Provenance.  None means the knowledge base did not record the field;
+    it is never fabricated.
+    """
+
+    doc_id: str
+    title: str | None = None
+    source_url: str | None = None
+    filename: str | None = None
+    heading: str | None = None
+    page: int | None = None
+    lifecycle: SourceLifecycle | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceItem:
     """A single retrieved-and-reranked evidence chunk.
@@ -58,6 +136,7 @@ class EvidenceItem:
     provenance: Provenance
     rerank_score: float | None = None
     extracted_claim_ids: FrozenSet[ClaimId] = field(default_factory=frozenset)
+    source: SourceRef | None = None
 
     def __post_init__(self) -> None:
         if not self.text:
@@ -158,6 +237,10 @@ class EvidenceBundle:
     validation_results: dict[CandidateId, "object"] = field(default_factory=dict)
     resolution: list["object"] = field(default_factory=list)
     metadata: BundleMetadata = field(default_factory=BundleMetadata)
+    # Observability only: what the retrieval stage actually executed for this
+    # request (per-retriever hit counts and timings, KB version). Written by
+    # the retrieval bridge; never read by validation or decision logic.
+    retrieval_trace: dict[str, object] = field(default_factory=dict)
 
     # -- evidence item insertion -------------------------------------------------
 

@@ -83,6 +83,11 @@ class VerificationReasonCode(str, Enum):
     NLI_UNAVAILABLE = "nli_unavailable"
     NLI_UNCERTAIN = "nli_uncertain"
     EVIDENCE_CONFLICT = "evidence_conflict"
+    # A claim explicitly reported as past ("the earlier 20 mg schedule was
+    # withdrawn"), supported by evidence the KB declares non-current and
+    # differing only from current evidence: correct history, not a
+    # present-tense assertion.
+    HISTORICAL_STATEMENT = "historical_statement"
     PROVENANCE_UNKNOWN = "provenance_unknown"
     BUDGET_EXHAUSTED = "budget_exhausted"
     EMPTY_ANSWER = "empty_answer"
@@ -186,6 +191,9 @@ class VerificationSummary:
     semantic_verification_calls: int = 0
     safety_critical_failure_count: int = 0
     budget_exhausted: bool = False
+    claims: tuple[GeneratedClaim, ...] = ()
+    """The generated claims that were verified (text + cited ids), so a
+    claim_result can be shown next to the sentence it refers to."""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.overall_confidence <= 1.0:

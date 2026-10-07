@@ -1,0 +1,7 @@
+Dosage instructions (multilingual):
+EN: Take 1 tablet orally twice daily with food.
+ES: Tomar 1 comprimido por vía oral dos veces al día con alimentos.
+FR: Prendre 1 comprimé par voie orale deux fois par jour avec de la nourriture.
+DE: 1 Tablette zweimal täglich oral mit Nahrung einnehmen.
+ZH: 每日两次，每次1片，随餐口服。
+AR: تناول قرصًا واحدًا عن طريق الفم مرتين يوميًا مع الطعام.

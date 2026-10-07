@@ -1,0 +1,6 @@
+DRUG: SEMAGLUTIDE
+Dose: 0.25mg–2mg weekly
+Indication: T2DM/obesity
+Adverse effects: Nausea, pancreatitis
+Category: Prescription Medicine
+Review date: 2024-01

@@ -50,6 +50,7 @@ class TransformersNLIBackend(NLIBackend):
         model_name: str = "microsoft/deberta-large-mnli",
         device: str = "cpu",
         label_map: dict[str, NLILabel] | None = None,
+        max_length: int = 512,
     ) -> None:
         self._model_name = model_name
         self._device = device
@@ -61,6 +62,7 @@ class TransformersNLIBackend(NLIBackend):
             "neutral": NLILabel.NEUTRAL,
             "entailment": NLILabel.ENTAILMENT,
         }
+        self._max_length = max_length
         self._lock = threading.Lock()
         self._pipeline: Any | None = None
         self._load_failed = False
@@ -80,12 +82,36 @@ class TransformersNLIBackend(NLIBackend):
             return False
         return True
 
+    def load(self) -> None:
+        """Load the model now. Raises NLIUnavailableError if it cannot load.
+
+        Lets the application fail at startup instead of discovering an
+        unloadable model on the first escalated claim.
+        """
+        self._ensure_loaded()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._pipeline is not None
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
     def predict(self, premise: str, hypothesis: str) -> NLISignal:
         self._ensure_loaded()
         assert self._pipeline is not None  # narrowed by _ensure_loaded
 
         try:
-            raw = self._pipeline({"text": premise, "text_pair": hypothesis}, top_k=None)
+            # Inputs longer than the model's window are truncated rather
+            # than raising -- an evidence chunk can exceed 512 tokens.
+            # max_length is explicit: some checkpoints (deberta-large-mnli)
+            # ship a tokenizer whose model_max_length is unset (~1e30), in
+            # which case truncation=True alone truncates nothing.
+            raw = self._pipeline(
+                {"text": premise, "text_pair": hypothesis},
+                top_k=None, truncation=True, max_length=self._max_length,
+            )
         except Exception as exc:  # pragma: no cover - third-party failure path
             raise NLIUnavailableError(f"NLI inference failed: {exc}") from exc
 
@@ -122,7 +148,7 @@ class TransformersNLIBackend(NLIBackend):
             try:
                 from transformers import pipeline as hf_pipeline
 
-                self._pipeline = hf_pipeline(
+                pipe = hf_pipeline(
                     task="text-classification",
                     model=self._model_name,
                     device=-1 if self._device == "cpu" else 0,
@@ -132,6 +158,20 @@ class TransformersNLIBackend(NLIBackend):
                 raise NLIUnavailableError(
                     f"Failed to load NLI model {self._model_name!r}: {exc}"
                 ) from exc
+            # A loaded model is not a correctly configured one: its output
+            # labels must be exactly the three NLI labels this backend maps.
+            id2label = getattr(getattr(getattr(pipe, "model", None), "config", None), "id2label", None)
+            if isinstance(id2label, dict):
+                labels = {str(v).lower() for v in id2label.values()}
+                expected = set(self._label_map)
+                if labels != expected:
+                    self._load_failed = True
+                    raise NLIUnavailableError(
+                        f"NLI model {self._model_name!r} emits labels {sorted(labels)}, "
+                        f"expected {sorted(expected)}; refusing a model whose label "
+                        "mapping cannot be verified"
+                    )
+            self._pipeline = pipe
 
 
 __all__ = ["NullNLIBackend", "TransformersNLIBackend"]

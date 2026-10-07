@@ -1,0 +1,6 @@
+DRUG: EMPAGLIFLOZIN
+Dose: 10mg–25mg daily
+Indication: T2DM/HF
+Adverse effects: UTI, DKA (rare)
+Category: Prescription Medicine
+Review date: 2024-01

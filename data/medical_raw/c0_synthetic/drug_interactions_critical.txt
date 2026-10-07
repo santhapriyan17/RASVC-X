@@ -1,0 +1,18 @@
+CRITICAL DRUG INTERACTIONS — Pharmacy Reference
+Last updated: 2024-01
+
+INTERACTION CLASS A (Contraindicated):
+- Warfarin + Fluconazole → INR elevation; risk of fatal hemorrhage
+- MAO inhibitors + Tramadol → serotonin syndrome
+- Methotrexate + NSAIDs → methotrexate toxicity (renal clearance)
+- Amiodarone + Simvastatin > 20mg → rhabdomyolysis
+- Linezolid + SSRIs → serotonin syndrome (avoid combination)
+
+INTERACTION CLASS B (Monitor closely):
+- Warfarin + Amoxicillin → variable INR effect; check INR weekly
+- Digoxin + Amiodarone → digoxin toxicity; reduce digoxin dose 50%
+- Lithium + Thiazide diuretics → lithium toxicity
+
+UNIQUE MARKER FOR TEST: X17-UNIQUE-FACT-42
+The combination of carbamazepine and valproate may reduce carbamazepine
+levels by 30-40% through enzyme induction reversal.

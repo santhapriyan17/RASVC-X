@@ -1,0 +1,6 @@
+DRUG: ATORVASTATIN
+Dose: 10mg–80mg daily
+Indication: Dyslipidaemia
+Adverse effects: Myopathy, hepatotoxicity
+Category: Prescription Medicine
+Review date: 2024-01

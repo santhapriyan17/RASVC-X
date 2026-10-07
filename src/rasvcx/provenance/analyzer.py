@@ -78,11 +78,19 @@ class ProvenanceAnalysisResult:
 
 
 def _source_identity_key(item: EvidenceItem) -> tuple:
+    """Identity of the SOURCE an item came from: its document.
+
+    Two chunks of one document are one source; two documents of the same
+    source_type are two sources.  Items with no recorded document identity
+    collapse to one unknown source per source_type (never counted as
+    independent corroboration).
+    """
     provenance = item.provenance
-    source_id = getattr(provenance, "source_id", UNKNOWN)
-    if source_id is UNKNOWN:
+    source = getattr(item, "source", None)
+    doc_id = getattr(source, "doc_id", None)
+    if not doc_id:
         return (provenance.source_type, UNKNOWN)
-    return (provenance.source_type, source_id)
+    return (provenance.source_type, doc_id)
 
 
 _APPLICABILITY_TO_VERDICT: dict[ApplicabilityLabel, CompatibilityVerdict] = {

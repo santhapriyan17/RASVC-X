@@ -1,0 +1,6 @@
+DRUG: SPIRONOLACTONE
+Dose: 25mg–100mg daily
+Indication: HF/ascites
+Adverse effects: Hyperkalaemia, gynaecomastia
+Category: Prescription Medicine
+Review date: 2024-01

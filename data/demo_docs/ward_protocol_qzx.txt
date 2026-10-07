@@ -1,0 +1,7 @@
+SYNTHETIC DEMONSTRATION DOCUMENT. Ward protocol QZX-17 for discharge planning.
+
+Under protocol QZX-17 every patient receives a pharmacist medication review before discharge.
+
+Protocol QZX-17 requires a follow-up telephone call within 72 hours of discharge.
+
+Protocol QZX-17 applies to adult inpatients on general medical wards.

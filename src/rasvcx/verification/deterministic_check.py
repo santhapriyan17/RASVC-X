@@ -30,6 +30,8 @@ Hard invariants enforced here (Section 41 of the master prompt):
 
 from __future__ import annotations
 
+import dataclasses
+import math
 import re
 from dataclasses import dataclass
 
@@ -96,6 +98,48 @@ _POPULATIONS: dict[str, frozenset[str]] = {
     "elderly": frozenset({"elderly", "seniors", "older adults"}),
     "all patients": frozenset({"all patients", "everyone", "all"}),
 }
+
+
+# Sentence boundaries inside an evidence chunk: terminal punctuation, line
+# breaks and list bullets.
+_EVIDENCE_SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|\s*[\r\n\u2022]+\s*")
+
+# A sentence must share at least this many significant tokens with the
+# claim to be considered a statement about the same thing.
+_MIN_ALIGNMENT_TOKENS = 2
+_MAX_ALIGNED_SENTENCES = 3
+
+
+def aligned_evidence_sentences(claim_text: str, evidence_text: str) -> list[str]:
+    """The sentence(s) of an evidence chunk that the claim is about.
+
+    Evidence items are multi-sentence chunks.  Polarity, comparative,
+    qualifier and numeric mismatches are properties of a SENTENCE: a "not"
+    or a different dose somewhere else in the chunk says nothing about the
+    claim.  This returns the best-matching sentences (most shared
+    significant tokens first) so those checks can be applied to them.
+
+    A single-sentence evidence item is returned as is.  An empty list means
+    no sentence of the chunk is about the claim: the deterministic mismatch
+    checks then have nothing to judge and stay inconclusive.
+    """
+    sentences = [seg.strip() for seg in _EVIDENCE_SENTENCE_RE.split(evidence_text) if seg and seg.strip()]
+    if len(sentences) <= 1:
+        return [evidence_text]
+
+    claim_tokens = significant_tokens(claim_text)
+    if not claim_tokens:
+        return []
+    scored = [
+        (len(claim_tokens & significant_tokens(sentence.lower())), -index, sentence)
+        for index, sentence in enumerate(sentences)
+    ]
+    best = max(score for score, _i, _s in scored)
+    if best < _MIN_ALIGNMENT_TOKENS:
+        return []
+    floor = max(_MIN_ALIGNMENT_TOKENS, math.ceil(0.6 * best))
+    kept = sorted((t for t in scored if t[0] >= floor), reverse=True)
+    return [sentence for _score, _i, sentence in kept[:_MAX_ALIGNED_SENTENCES]]
 
 
 def _raw_tokens(text: str) -> frozenset[str]:
@@ -232,10 +276,13 @@ class DeterministicClaimVerifier:
             )
 
         best: _Verdict | None = None
+        supporters: set[EvidenceItemId] = set()
         for item in candidate_items[: self._max_fallback_candidates]:
             verdict = self._compare_claim_to_item(claim, item)
             if verdict is None:
                 continue
+            if verdict.label is SupportLabel.SUPPORTED:
+                supporters |= verdict.supporting_item_ids
             if best is None or _severity(verdict.label) > _severity(best.label) or (
                 _severity(verdict.label) == _severity(best.label)
                 and verdict.confidence > best.confidence
@@ -244,6 +291,14 @@ class DeterministicClaimVerifier:
 
         if best is None:
             return None  # inconclusive -- escalate to semantic verification
+
+        if best.label is SupportLabel.CONTRADICTED and supporters:
+            # One cited source contradicts the claim while another supports
+            # it.  The claim stays CONTRADICTED here; the supporting items
+            # are recorded so the M8-context step can tell a claim that
+            # follows the current source of a superseded pair from a claim
+            # that no source supports.
+            best = dataclasses.replace(best, supporting_item_ids=frozenset(supporters))
 
         return self._result(claim, best)
 
@@ -261,56 +316,86 @@ class DeterministicClaimVerifier:
         return find_lexically_relevant_items(claim, bundle)
 
     def _compare_claim_to_item(self, claim: GeneratedClaim, item: EvidenceItem) -> _Verdict | None:
-        # Order matters: mismatch signals (numeric, negation, comparative,
-        # temporal, scope) all take precedence over a same-claim lexical
-        # SUPPORTED verdict, per this module's docstring invariant.
-        checks = (
-            self._check_numeric(claim, item),
-            self._check_negation(claim, item),
-            self._check_comparative(claim, item),
-            self._check_temporal(claim, item),
-            self._check_scope(claim, item, _JURISDICTIONS, "jurisdiction",
-                               VerificationReasonCode.JURISDICTION_MISMATCH),
-            self._check_scope(claim, item, _POPULATIONS, "population",
-                               VerificationReasonCode.POPULATION_MISMATCH),
-            self._check_qualifier_strengthening(claim, item),
-        )
-        for verdict in checks:
-            if verdict is not None:
-                return verdict
+        # Mismatch checks are sentence-level judgements, so they run against
+        # the sentence(s) of this chunk the claim is actually about, never
+        # against the whole chunk (see aligned_evidence_sentences).
+        aligned = aligned_evidence_sentences(claim.normalized_text, item.text)
+        if aligned:
+            focus = dataclasses.replace(item, text=aligned[0])
+            window = dataclasses.replace(item, text=" ".join(aligned))
+            # Order matters: mismatch signals (numeric, negation, comparative,
+            # temporal, scope) all take precedence over a same-claim lexical
+            # SUPPORTED verdict, per this module's docstring invariant.
+            checks = (
+                self._check_numeric(claim, window),
+                self._check_negation(claim, focus),
+                self._check_comparative(claim, focus),
+                self._check_temporal(claim, focus),
+                self._check_scope(claim, item, _JURISDICTIONS, "jurisdiction",
+                                   VerificationReasonCode.JURISDICTION_MISMATCH),
+                self._check_scope(claim, item, _POPULATIONS, "population",
+                                   VerificationReasonCode.POPULATION_MISMATCH),
+                self._check_qualifier_strengthening(claim, focus),
+            )
+            # A matching number must not hide a mismatch found by a later
+            # check: "500 mg for children" cited to an adults-only passage
+            # has the right number and the wrong population.  Any mismatch
+            # wins over a numeric SUPPORTED; among mismatches the first in
+            # the order above is reported.
+            found = [v for v in checks if v is not None]
+            mismatches = [v for v in found if v.label is not SupportLabel.SUPPORTED]
+            if mismatches:
+                return mismatches[0]
+            if found:
+                return found[0]
 
         return self._check_lexical_support(claim, item)
 
     def _check_numeric(self, claim: GeneratedClaim, item: EvidenceItem) -> _Verdict | None:
-        claim_numbers = extract_numbers(claim.normalized_text)
-        evidence_numbers = extract_numbers(item.text.lower())
+        """Compare the claim's quantities with those of the aligned evidence.
+
+        Every claim quantity is checked against ALL evidence quantities of
+        the same unit, so the verdict does not depend on the order numbers
+        happen to appear in:
+          - a claim quantity with same-unit evidence quantities, none of
+            which it matches            -> CONTRADICTED
+          - otherwise, at least one claim quantity matched -> SUPPORTED
+          - no comparable quantities    -> inconclusive (None)
+        """
+        claim_numbers = [n for n in extract_numbers(claim.normalized_text) if n.unit is not None]
+        evidence_numbers = [n for n in extract_numbers(item.text.lower()) if n.unit is not None]
         if not claim_numbers or not evidence_numbers:
             return None
 
+        matched: tuple[float, str] | None = None
         for cn in claim_numbers:
-            for en in evidence_numbers:
-                if cn.unit is None or en.unit is None or cn.unit != en.unit:
-                    continue
-                if cn.value == en.value:
-                    return _Verdict(
-                        label=SupportLabel.SUPPORTED,
-                        reason_code=VerificationReasonCode.DIRECT_EVIDENCE_SUPPORT,
-                        confidence=0.95,
-                        rationale=f"Exact numeric match ({cn.value}{cn.unit} == {en.value}{en.unit})",
-                        supporting_item_ids=frozenset({item.item_id}),
-                    )
-                tolerance = self._numeric_relative_tolerance * max(abs(cn.value), abs(en.value), 1e-9)
-                if abs(cn.value - en.value) > tolerance:
-                    return _Verdict(
-                        label=SupportLabel.CONTRADICTED,
-                        reason_code=VerificationReasonCode.NUMERIC_MISMATCH,
-                        confidence=0.95,
-                        rationale=(
-                            f"Claim states {cn.value}{cn.unit}, evidence states "
-                            f"{en.value}{en.unit}"
-                        ),
-                        contradicting_item_ids=frozenset({item.item_id}),
-                    )
+            same_unit = [en.value for en in evidence_numbers if en.unit == cn.unit]
+            if not same_unit:
+                continue
+            if any(
+                abs(cn.value - value)
+                <= self._numeric_relative_tolerance * max(abs(cn.value), abs(value), 1e-9)
+                for value in same_unit
+            ):
+                matched = matched or (cn.value, cn.unit)
+                continue
+            stated = ", ".join(f"{value}{cn.unit}" for value in sorted(set(same_unit)))
+            return _Verdict(
+                label=SupportLabel.CONTRADICTED,
+                reason_code=VerificationReasonCode.NUMERIC_MISMATCH,
+                confidence=0.95,
+                rationale=f"Claim states {cn.value}{cn.unit}, evidence states {stated}",
+                contradicting_item_ids=frozenset({item.item_id}),
+            )
+
+        if matched is not None:
+            return _Verdict(
+                label=SupportLabel.SUPPORTED,
+                reason_code=VerificationReasonCode.DIRECT_EVIDENCE_SUPPORT,
+                confidence=0.95,
+                rationale=f"Exact numeric match ({matched[0]}{matched[1]} == {matched[0]}{matched[1]})",
+                supporting_item_ids=frozenset({item.item_id}),
+            )
         return None
 
     def _check_negation(self, claim: GeneratedClaim, item: EvidenceItem) -> _Verdict | None:
@@ -436,6 +521,14 @@ class DeterministicClaimVerifier:
                 ),
                 supporting_item_ids=frozenset({item.item_id}),
             )
+
+        if _find_scope_keyword(item.text, vocab) == claim_keyword:
+            # The passage itself speaks about this scope ("in pediatric
+            # patients 4 years and older ..."). Document-level metadata is
+            # coarser than the text: one label covers several populations,
+            # so its single metadata value cannot contradict what the cited
+            # passage explicitly says.
+            return None
 
         if str(evidence_value).lower() != claim_keyword.lower():
             return _Verdict(

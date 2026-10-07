@@ -10,6 +10,7 @@ recording the returned ValidationResult (see validation/verified_context.py).
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 
@@ -67,6 +68,16 @@ _UNIT_TO_BASE: dict[str, tuple[str, float]] = {
 }
 
 
+#: Memoization bound for the pure text functions below.  The same claim
+#: text is compared against every other claim of a candidate pair, so
+#: without memoization each text was re-tokenized / re-scanned O(pairs)
+#: times (profiled: ~60k tokenizations for 10 queries).  Results are
+#: immutable, so caching changes no comparison.
+#: RASVCX_M8_TEXT_CACHE=0 disables memoization (used to measure its effect).
+_TEXT_CACHE_SIZE = int(__import__("os").environ.get("RASVCX_M8_TEXT_CACHE", "65536"))
+
+
+@functools.lru_cache(maxsize=_TEXT_CACHE_SIZE)
 def significant_tokens(text: str) -> frozenset[str]:
     """Lowercase, tokenize, and drop stopwords/short tokens.
 
@@ -80,12 +91,74 @@ def significant_tokens(text: str) -> frozenset[str]:
     )
 
 
+_UNIT_TOKENS: frozenset[str] = frozenset(_UNIT_TO_BASE) | {"unit", "units"}
+
+# Words that describe HOW a quantity is given, not WHAT it is a quantity of.
+# Dosing sentences for two different drugs share most of these ("200 mg on
+# the first day, followed by 100 mg once daily"); counting them as subject
+# overlap makes unrelated statements look like the same proposition.
+_QUANTITY_CONTEXT_TOKENS: frozenset[str] = frozenset({
+    "day", "days", "daily", "once", "twice", "thrice", "dose", "doses",
+    "dosage", "dosages", "dosing", "single", "followed", "first", "second",
+    "third", "hour", "hours", "week", "weeks", "weekly", "month", "months",
+    "year", "years", "time", "times", "every", "each", "total", "maximum",
+    "minimum", "initial", "recommended", "patient", "patients", "mild",
+    "moderate", "severe", "treatment", "therapy", "use", "used", "given",
+    "administered", "taken", "take", "oral", "orally", "tablet", "tablets",
+    "capsule", "capsules", "after", "before", "until", "through", "have",
+    "has", "been", "were", "will", "one", "two", "three", "least", "most",
+    "more", "less", "about", "approximately", "also", "such", "may",
+})
+
+# Two claims must share at least this many subject tokens before a
+# difference between them can be called a contradiction.
+_MIN_SHARED_PROPOSITION_TOKENS = 2
+
+
+@functools.lru_cache(maxsize=_TEXT_CACHE_SIZE)
+def proposition_tokens(text: str) -> frozenset[str]:
+    """The tokens that say WHAT a claim is about.
+
+    Significant tokens with numbers, unit words and generic
+    quantity-context words removed.  What is left (drug, condition,
+    intervention, measured parameter) is the basis for deciding whether
+    two claims with different numbers are making the same statement.
+    """
+    return frozenset(
+        tok for tok in significant_tokens(text)
+        if not tok.isdigit()
+        and tok not in _UNIT_TOKENS
+        and tok not in _QUANTITY_CONTEXT_TOKENS
+    )
+
+
+def proposition_overlap(text_a: str, text_b: str) -> float:
+    """Overlap coefficient |A & B| / min(|A|, |B|) of proposition tokens.
+
+    0.0 when the claims share fewer than two subject tokens: a single
+    common word is never enough to treat two statements as the same
+    proposition.
+    """
+    tokens_a = proposition_tokens(text_a)
+    tokens_b = proposition_tokens(text_b)
+    shared = len(tokens_a & tokens_b)
+    if shared < _MIN_SHARED_PROPOSITION_TOKENS:
+        return 0.0
+    return shared / min(len(tokens_a), len(tokens_b))
+
+
 def extract_numbers(text: str) -> list[NumericExtraction]:
     """Extract all numeric tokens (with adjacent unit, if any) from text.
 
     Returns extractions in left-to-right order. Never raises on malformed
-    input; text without numbers yields an empty list.
+    input; text without numbers yields an empty list.  (A fresh list each
+    call; the scan itself is memoized.)
     """
+    return list(_extract_numbers(text))
+
+
+@functools.lru_cache(maxsize=_TEXT_CACHE_SIZE)
+def _extract_numbers(text: str) -> tuple[NumericExtraction, ...]:
     results: list[NumericExtraction] = []
     for match in _NUMBER_RE.finditer(text):
         raw_unit = match.group("unit")
@@ -101,14 +174,19 @@ def extract_numbers(text: str) -> list[NumericExtraction]:
         results.append(
             NumericExtraction(value=value, unit=unit, span=match.span())
         )
-    return results
+    return tuple(results)
 
 
 def extract_years(text: str) -> list[int]:
     """Extract 4-digit years mentioned directly in claim text (lightweight,
     distinct from Provenance.date parsing in provenance/context_extractor.py).
     """
-    return [int(m.group(0)) for m in _YEAR_RE.finditer(text)]
+    return list(_extract_years(text))
+
+
+@functools.lru_cache(maxsize=_TEXT_CACHE_SIZE)
+def _extract_years(text: str) -> tuple[int, ...]:
+    return tuple(int(m.group(0)) for m in _YEAR_RE.finditer(text))
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,10 +231,11 @@ def _compare_numeric_pair(
 def _compare_two_numbers(
     a: NumericExtraction, b: NumericExtraction, config: DeterministicConfig
 ) -> _NumericComparison | None:
-    if a.unit is None and b.unit is None:
-        # Two bare numbers with no unit context: comparing them would risk
-        # treating unrelated quantities (e.g. a year vs. a dosage count) as
-        # if they were the same measurement. Too ambiguous to compare.
+    if a.unit is None or b.unit is None:
+        # A bare number has no unit context: comparing it with another bare
+        # number, or with a quantity that does carry a unit (a list index
+        # "4." against "10 mL"), would treat unrelated quantities as the
+        # same measurement. Too ambiguous to compare.
         return None
 
     if a.unit is not None and b.unit is not None and a.unit != b.unit:
@@ -343,7 +422,20 @@ class DeterministicValidator:
         numbers_a = extract_numbers(text_a)
         numbers_b = extract_numbers(text_b)
 
+        # A difference is a contradiction only between claims that state the
+        # same proposition (see DeterministicConfig).
+        same_proposition = (
+            proposition_overlap(text_a, text_b)
+            >= self._config.min_proposition_overlap_for_contradiction
+        )
+
         numeric_comparison = _compare_numeric_pair(numbers_a, numbers_b, self._config)
+        if (
+            numeric_comparison is not None
+            and numeric_comparison.label is ValidationLabel.CONTRADICTION
+            and not same_proposition
+        ):
+            numeric_comparison = None
         if numeric_comparison is not None:
             return ValidationResult(
                 candidate_id=candidate_id,
@@ -357,6 +449,12 @@ class DeterministicValidator:
             )
 
         year_comparison = _compare_year_pair(text_a, text_b)
+        if (
+            year_comparison is not None
+            and year_comparison.label is ValidationLabel.CONTRADICTION
+            and not same_proposition
+        ):
+            year_comparison = None
         if year_comparison is not None:
             return ValidationResult(
                 candidate_id=candidate_id,

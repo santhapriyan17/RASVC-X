@@ -1,0 +1,6 @@
+DRUG: DIGOXIN
+Dose: 62.5–250mcg daily
+Indication: AF rate control
+Adverse effects: Narrow TI; toxicity risk
+Category: Prescription Medicine
+Review date: 2024-01

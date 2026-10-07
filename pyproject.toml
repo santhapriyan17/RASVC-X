@@ -1,0 +1,98 @@
+# pyproject.toml — single authoritative dependency source for RASVC-X.
+#
+# Install options (Windows PowerShell):
+#
+#   Core + ingestion only (offline_test mode -- must be requested explicitly
+#   with RASVCX_EXECUTION_MODE=offline_test):
+#     pip install -e .
+#
+#   Full research mode, the application default (ML models, Qdrant client,
+#   Gemini SDK):
+#     pip install -e ".[research,gemini]"
+#
+#   Development (adds pytest):
+#     pip install -e ".[research,gemini,dev]"
+#
+# Run:  python -m rasvcx        (or the `rasvcx` console script)
+#
+# Do NOT maintain a separate requirements.txt.
+# requirements.txt and requirements-dev.txt intentionally remain empty.
+
+[build-system]
+requires = ["setuptools>=74.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------------------
+# Project metadata
+# ---------------------------------------------------------------------------
+
+[project]
+name = "rasvcx"
+version = "0.17.0"
+description = "Risk-Adaptive Source Validation and Confidence Framework for Healthcare RAG"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# ---------------------------------------------------------------------------
+# Core dependencies — always required, all modes
+# ---------------------------------------------------------------------------
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "pydantic>=2.0.0",
+    "starlette>=0.27.0",
+    "pyyaml>=6.0",
+    "rank-bm25>=0.2.2",
+    "httpx>=0.24.0",
+    "pypdf>=5.0.0",
+    "python-docx>=1.0.0",
+    "aiofiles>=23.0.0",
+    "filetype>=1.2.0",
+    "python-multipart>=0.0.7",
+    "lxml>=5.0.0",
+    "beautifulsoup4>=4.12.0",
+    "chardet>=5.0.0",
+    "openpyxl>=3.1.0",
+    "python-pptx>=0.6.21",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+rasvcx = "rasvcx.__main__:main"
+
+# ---------------------------------------------------------------------------
+# Optional extras
+# ---------------------------------------------------------------------------
+
+[project.optional-dependencies]
+
+research = [
+    "sentence-transformers>=2.0.0",
+    # query_points() (used by retrieval/dense.py) replaced the removed search().
+    "qdrant-client>=1.10.0",
+    "transformers>=4.30.0",
+    "torch>=2.0.0",
+]
+
+gemini = [
+    "google-genai>=2.0.0",
+]
+
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+# ---------------------------------------------------------------------------
+# pytest configuration
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src"]
+norecursedirs = ["frontend", "node_modules", "dist", ".venv", "data", "corpus"]
+asyncio_default_fixture_loop_scope = "function"

@@ -69,9 +69,13 @@ def format_evidence_block(item: EvidenceItem) -> str:
     The system prompt instructs the model to treat their content as
     retrieved data only.
     """
+    from rasvcx.provenance.evidence_roles import temporal_status
+
     prov = item.provenance
+    status, _ = temporal_status(item)
     attrs = " ".join([
         f'id="{item.item_id}"',
+        f'status="{status.value.lower()}"',
         _render_provenance_attr("source_type", prov.source_type.value
                                  if hasattr(prov.source_type, "value") else prov.source_type),
         _render_provenance_attr("date", prov.date),
@@ -79,7 +83,21 @@ def format_evidence_block(item: EvidenceItem) -> str:
         _render_provenance_attr("population", prov.population),
         _render_provenance_attr("dosage_context", prov.dosage_context),
     ])
-    return f"<evidence {attrs}>\n{item.text}\n</evidence>"
+    return f"<evidence {attrs}>\n{_neutralise_delimiters(item.text)}\n</evidence>"
+
+
+_DELIMITER_RE = re.compile(r"<(/?)\s*evidence\b", re.IGNORECASE)
+
+
+def _neutralise_delimiters(text: str) -> str:
+    """Stop document text from opening or closing an evidence block.
+
+    A retrieved chunk containing "</evidence>" followed by instructions
+    would otherwise end the data block early and place those instructions
+    outside it.  The tag is rewritten as "&lt;evidence" so the text stays
+    readable but is no longer a delimiter.
+    """
+    return _DELIMITER_RE.sub(lambda m: f"&lt;{m.group(1)}evidence", text)
 
 
 def format_evidence_blocks(

@@ -1,0 +1,6 @@
+DRUG: METFORMIN
+Dose: 500mg–2000mg daily
+Indication: T2DM
+Adverse effects: GI upset, lactic acidosis
+Category: Prescription Medicine
+Review date: 2024-01

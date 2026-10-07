@@ -64,11 +64,18 @@ class Generator:
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._llm_config = llm_config or LLMConfig()
 
+    def last_provider_stats(self) -> dict | None:
+        """The LLM client's record of this thread's last provider call
+        (attempts, retries, wait, quota), when the client keeps one."""
+        getter = getattr(self._llm_client, "last_call_stats", None)
+        return getter() if callable(getter) else None
+
     def generate(
         self,
         query: QueryRequest,
         bundle: EvidenceBundle,
         validation_summary: ValidationSummary | None = None,
+        verification_feedback: str | None = None,
     ) -> GenerationResult:
         """Generate an evidence-grounded answer.
 
@@ -81,10 +88,26 @@ class Generator:
         via bundle.record_stage_elapsed (the only mutation, matching
         the pattern used by M8 and M9) but never modifies evidence
         items, claims, validation results, or resolution.
+
+        Args:
+            query:                 The user's question.
+            bundle:                Validated evidence (read-only).
+            validation_summary:    M8 conflict/resolution info, or None.
+            verification_feedback: Optional repair context derived from
+                M9 verification findings on a previous generation
+                attempt.  Forwarded to PromptBuilder.build() which
+                appends it as a REPAIR INSTRUCTIONS section.  When None
+                (the default), behavior is identical to a first-pass
+                generation — all existing callers are unaffected.
         """
         start = time.perf_counter()
+        reset = getattr(self._llm_client, "reset_call_stats", None)
+        if callable(reset):
+            reset()  # a pre-flight failure must not inherit the last call's record
         try:
-            return self._generate_inner(query, bundle, validation_summary, start)
+            return self._generate_inner(
+                query, bundle, validation_summary, verification_feedback, start
+            )
         finally:
             bundle.record_stage_elapsed(
                 "generation", time.perf_counter() - start
@@ -95,6 +118,7 @@ class Generator:
         query: QueryRequest,
         bundle: EvidenceBundle,
         validation_summary: ValidationSummary | None,
+        verification_feedback: str | None,
         start: float,
     ) -> GenerationResult:
         # -- Pre-flight: evidence presence --
@@ -110,7 +134,8 @@ class Generator:
 
         # -- Prompt construction --
         prompt_result = self._prompt_builder.build(
-            query, bundle, validation_summary
+            query, bundle, validation_summary,
+            verification_feedback=verification_feedback,
         )
 
         # -- Pre-flight: context size --

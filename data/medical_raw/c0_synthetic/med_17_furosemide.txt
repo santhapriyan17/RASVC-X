@@ -1,0 +1,6 @@
+DRUG: FUROSEMIDE
+Dose: 20mg–500mg daily
+Indication: Fluid overload
+Adverse effects: Electrolyte imbalance
+Category: Prescription Medicine
+Review date: 2024-01

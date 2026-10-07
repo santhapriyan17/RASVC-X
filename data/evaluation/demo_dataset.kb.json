@@ -1,0 +1,12 @@
+{
+  "_comment": "Knowledge base the rasvcx_demo safety-regression cases run against. It must be the PUBLISHED version (scripts/publish_kb.py, pointer data/demo_kb/active_version.json) with its persisted Qdrant collection. Benchmarks refuse seed_fallback, a different corpus or BM25 index, and an in-memory dense rebuild (qdrant_mode=memory). Run official benchmarks with the server stopped (embedded Qdrant is single-process).",
+  "dataset_id": "rasvcx_demo",
+  "kb_version_id": "v_76aefc96ddc1",
+  "corpus_hash": "76aefc96ddc1bdcf5c9af7c39d8f037ba80eebc0b14d69fddbe60361ba47c870",
+  "index_hash": "76c796104253ecfac1bcbad0f15eafe8603a67ef4a9f475730d5507d1737eb78",
+  "doc_count": 355,
+  "chunk_count": 3264,
+  "kb_source": "published_kb",
+  "publication_status": "ACTIVE",
+  "dense_index_origin": "persisted"
+}

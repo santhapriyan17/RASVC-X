@@ -1,0 +1,10 @@
+{
+  "bm25_path": "corpus\\bm25_index.pkl",
+  "chunk_count": 1104,
+  "corpus_fingerprint": "febdaea6fd4177ac5633f9398dc56a32c40b530ed65266193ee165de938f5c4d",
+  "doc_count": 241,
+  "index_format_version": "bm25-v1",
+  "qdrant_collection": null,
+  "schema_version": 1,
+  "store_path": "corpus\\corpus_store.json"
+}

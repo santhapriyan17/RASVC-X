@@ -1,0 +1,122 @@
+[
+  {
+    "doc_id": "smoke_policy_visiting_v1",
+    "title": "Hospital Visiting Policy — General Wards",
+    "text": "Visiting hours for general wards are 9am to 8pm daily. All visitors must check in at the main reception desk and wear a visitor badge at all times. Children under 12 may visit only between 2pm and 5pm and must be accompanied by an adult. A maximum of two visitors are permitted per patient at any one time.",
+    "source_type": "institutional_policy",
+    "date": "2023-06-01",
+    "jurisdiction": "US",
+    "population": "general",
+    "dosage_context": null,
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_policy_visiting_icu_v1",
+    "title": "ICU Visiting Policy",
+    "text": "Visiting hours for the intensive care unit are restricted to 10am to 12pm and 6pm to 8pm. Only immediate family members are permitted to visit ICU patients. All visitors must sanitise hands before and after each visit. Mobile phones must be switched off inside the ICU.",
+    "source_type": "institutional_policy",
+    "date": "2023-06-01",
+    "jurisdiction": "US",
+    "population": "ICU patients",
+    "dosage_context": null,
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_drug_a_adult_guideline_v1",
+    "title": "Synthetic Guideline: Drug A Dosing — Adults",
+    "text": "Drug A is recommended at 500mg twice daily for adults aged 18 and over with confirmed condition X. Treatment should not exceed 12 weeks without clinical review. Drug A is contraindicated in patients with severe renal impairment (eGFR less than 30).",
+    "source_type": "clinical_guideline",
+    "date": "2022-03-15",
+    "jurisdiction": "US",
+    "population": "adults",
+    "dosage_context": "oral",
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_drug_a_pediatric_guideline_v1",
+    "title": "Synthetic Guideline: Drug A Dosing — Paediatric",
+    "text": "Drug A dosing in paediatric patients aged 6 to 17 is weight-based: 10mg per kilogram of body weight twice daily, not to exceed 400mg per dose. Duration of treatment should not exceed 8 weeks. Renal function must be assessed before initiating treatment in this population.",
+    "source_type": "clinical_guideline",
+    "date": "2022-03-15",
+    "jurisdiction": "US",
+    "population": "paediatric 6-17",
+    "dosage_context": "oral",
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_drug_a_eu_guideline_v1",
+    "title": "Synthetic EU Guideline: Drug A Dosing — Adults",
+    "text": "In the European regulatory framework, Drug A is approved at 250mg twice daily for adult patients with condition X. The lower approved dose reflects pharmacokinetic data from the European study population. Treatment duration is limited to 10 weeks.",
+    "source_type": "regulatory_document",
+    "date": "2022-09-01",
+    "jurisdiction": "EU",
+    "population": "adults",
+    "dosage_context": "oral",
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_drug_b_guideline_v1",
+    "title": "Synthetic Guideline: Drug B Dosing — Adults",
+    "text": "Drug B is recommended at 100mg once daily for adults with condition Y. The dose may be increased to 200mg once daily after 4 weeks if response is inadequate. Drug B should be taken with food to reduce gastrointestinal side effects.",
+    "source_type": "clinical_guideline",
+    "date": "2021-11-01",
+    "jurisdiction": "US",
+    "population": "adults",
+    "dosage_context": "oral",
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_drug_b_outdated_guideline_v1",
+    "title": "Synthetic Outdated Guideline: Drug B Dosing — Adults (superseded)",
+    "text": "Drug B is recommended at 150mg once daily for adults with condition Y. This dose recommendation was based on the original phase III trial data.",
+    "source_type": "clinical_guideline",
+    "date": "2018-05-01",
+    "jurisdiction": "US",
+    "population": "adults",
+    "dosage_context": "oral",
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_drug_c_label_v1",
+    "title": "Synthetic Drug Label: Drug C",
+    "text": "Drug C approved dose for adults is 75mg once daily. Drug C is not recommended for use in patients under 18 years of age due to insufficient safety data. Dose adjustment is required in patients with hepatic impairment.",
+    "source_type": "drug_label",
+    "date": "2023-01-10",
+    "jurisdiction": "US",
+    "population": "adults",
+    "dosage_context": "oral",
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_drug_c_conflicting_label_v1",
+    "title": "Synthetic Conflicting Drug Label: Drug C (alternate source)",
+    "text": "Drug C approved dose for adults is 50mg once daily. Patients over 65 years should receive a starting dose of 25mg once daily. Drug C is contraindicated in patients with severe hepatic impairment (Child-Pugh class C).",
+    "source_type": "drug_label",
+    "date": "2023-01-10",
+    "jurisdiction": "US",
+    "population": "adults",
+    "dosage_context": "oral",
+    "source_url": null,
+    "is_synthetic": true
+  },
+  {
+    "doc_id": "smoke_pharmacy_hours_v1",
+    "title": "Hospital Pharmacy Operating Hours",
+    "text": "The hospital pharmacy is open Monday to Friday 8am to 6pm and Saturday 9am to 1pm. The pharmacy is closed on Sundays and public holidays. An emergency medication service is available 24 hours via the on-call pharmacist.",
+    "source_type": "institutional_policy",
+    "date": "2023-04-01",
+    "jurisdiction": "US",
+    "population": "general",
+    "dosage_context": null,
+    "source_url": null,
+    "is_synthetic": true
+  }
+]

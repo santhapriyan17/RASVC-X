@@ -1,0 +1,6 @@
+DRUG: ALLOPURINOL
+Dose: 100mg–900mg daily
+Indication: Gout
+Adverse effects: Start low; SJS rare
+Category: Prescription Medicine
+Review date: 2024-01

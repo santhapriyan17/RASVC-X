@@ -13,11 +13,13 @@ in full (Section 27).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from rasvcx.schemas.common import EvidenceItemId, EvidenceRelationship
 from rasvcx.schemas.evidence import EvidenceBundle
 from rasvcx.schemas.verification import (
+    VerificationReasonCode,
     AnswerVerdict,
     CitationResult,
     ClaimVerificationResult,
@@ -171,6 +173,163 @@ class VerdictAggregator:
         return mean_confidence
 
 
+def _is_newer(bundle: EvidenceBundle, newer: EvidenceItemId, older: EvidenceItemId) -> bool:
+    """True when `older` is DECLARED non-current (superseded / withdrawn /
+    historical) and `newer` is not.
+
+    Publication dates are not compared: recency is not evidence that a
+    source was replaced (see resolution.EvidenceResolver rule 1b).
+    """
+    from rasvcx.provenance.evidence_roles import STALE_OR_PENDING as stale, temporal_status
+
+    return (
+        temporal_status(bundle.evidence_items[older])[0] in stale
+        and temporal_status(bundle.evidence_items[newer])[0] not in stale
+    )
+
+
+def _resolve_superseded_sources(
+    claim_results: list[ClaimVerificationResult],
+    validation_summary: ValidationSummary,
+    bundle: EvidenceBundle,
+    candidate_items: dict[str, tuple[EvidenceItemId, EvidenceItemId]],
+) -> list[ClaimVerificationResult]:
+    """A claim that follows the CURRENT source of a superseded pair is supported.
+
+    The deterministic verifier marks a claim CONTRADICTED when any cited
+    source states a different value, even if another cited source states
+    exactly the claim's value.  When M8 resolved that pair of sources as a
+    temporal difference (same statement, publication dates far apart) and
+    the supporting source is the more recent one, the "contradiction" is an
+    old recommendation that has been replaced: the claim reports the
+    current one and is SUPPORTED.
+
+    Deliberately narrow:
+      - only temporal-diff, and only when the SUPPORTING source is newer --
+        a claim that follows the older source stays CONTRADICTED;
+      - every contradicting source must be explained this way;
+      - population / jurisdiction / dosage differences are not handled
+        here: which side applies depends on the question, not on a date.
+    """
+    temporal_pairs: set[frozenset[EvidenceItemId]] = set()
+    for resolution in validation_summary.resolutions:
+        if resolution.relationship is EvidenceRelationship.TEMPORAL_DIFF:
+            pair = candidate_items.get(resolution.candidate_id)
+            if pair is not None:
+                temporal_pairs.add(frozenset(pair))
+    if not temporal_pairs:
+        return claim_results
+
+    out: list[ClaimVerificationResult] = []
+    for result in claim_results:
+        explained = (
+            result.label is SupportLabel.CONTRADICTED
+            and result.supporting_item_ids
+            and result.contradicting_item_ids
+            and all(
+                any(
+                    frozenset((sup, con)) in temporal_pairs and _is_newer(bundle, sup, con)
+                    for sup in result.supporting_item_ids
+                )
+                for con in result.contradicting_item_ids
+            )
+        )
+        if not explained:
+            out.append(result)
+            continue
+        older = ", ".join(sorted(str(i) for i in result.contradicting_item_ids))
+        out.append(
+            ClaimVerificationResult(
+                claim_id=result.claim_id,
+                label=SupportLabel.SUPPORTED,
+                confidence=min(result.confidence, 0.8),
+                stage=result.stage,
+                reason_code=VerificationReasonCode.DIRECT_EVIDENCE_SUPPORT,
+                rationale=(
+                    f"Supported by the current source; the differing value in {older} "
+                    f"is from a source declared superseded/withdrawn/historical (temporal-diff)"
+                ),
+                supporting_item_ids=result.supporting_item_ids,
+                contradicting_item_ids=frozenset(),
+            )
+        )
+    return out
+
+
+_HISTORICAL_MARKER_RE = re.compile(
+    r"\b(?:earlier|previous(?:ly)?|former(?:ly)?|prior|no\s+longer|used\s+to|in\s+the\s+past|"
+    r"historical(?:ly)?|withdrawn|superseded|replaced|discontinued|retired|obsolete)\b",
+    re.IGNORECASE,
+)
+_PRESENT_ASSERTION_RE = re.compile(
+    r"\b(?:current(?:ly)?|now|today|still|at\s+present|presently|is\s+recommended|"
+    r"are\s+recommended|should\s+be|must\s+be)\b",
+    re.IGNORECASE,
+)
+
+
+def resolve_historical_statements(
+    claim_results: list[ClaimVerificationResult],
+    claims: list,
+    bundle: EvidenceBundle,
+) -> list[ClaimVerificationResult]:
+    """A claim that REPORTS superseded content as history is not a
+    contradiction of the current evidence.
+
+    Example: "An earlier dose of 20 mg weekly was previously used, but that
+    schedule has been withdrawn [E1, E2]" -- E2 (declared withdrawn) says
+    20 mg weekly, E1 (current) says 10 mg.  The numeric check marks it
+    CONTRADICTED although it is a faithful statement about the past.
+
+    Re-labelled SUPPORTED (reason HISTORICAL_STATEMENT) only when ALL hold:
+      - the claim text carries an explicit past/withdrawn marker and makes
+        no present-tense or recommendation assertion;
+      - it has supporting evidence, and EVERY supporting item is declared
+        non-current (withdrawn / superseded / historical / future);
+      - it has contradicting evidence, and EVERY contradicting item is NOT
+        declared non-current.
+    Otherwise the result is unchanged -- a claim asserting the old value as
+    the current one stays CONTRADICTED.  Lifecycle comes only from KB
+    metadata; nothing here reads dates out of text.
+    """
+    from rasvcx.provenance.evidence_roles import STALE_OR_PENDING, temporal_status
+
+    texts = {str(getattr(c, "claim_id", "")): getattr(c, "text", "") for c in claims}
+    items = bundle.evidence_items
+
+    def stale(iid: EvidenceItemId) -> bool | None:
+        item = items.get(iid)
+        return None if item is None else temporal_status(item)[0] in STALE_OR_PENDING
+
+    out: list[ClaimVerificationResult] = []
+    for r in claim_results:
+        text = texts.get(str(r.claim_id), "")
+        if (
+            r.label is SupportLabel.CONTRADICTED
+            and r.supporting_item_ids and r.contradicting_item_ids
+            and _HISTORICAL_MARKER_RE.search(text)
+            and not _PRESENT_ASSERTION_RE.search(text)
+            and all(stale(i) is True for i in r.supporting_item_ids)
+            and all(stale(i) is False for i in r.contradicting_item_ids)
+        ):
+            sup = ", ".join(sorted(str(i) for i in r.supporting_item_ids))
+            con = ", ".join(sorted(str(i) for i in r.contradicting_item_ids))
+            out.append(ClaimVerificationResult(
+                claim_id=r.claim_id, label=SupportLabel.SUPPORTED,
+                confidence=min(r.confidence, 0.8), stage=r.stage,
+                reason_code=VerificationReasonCode.HISTORICAL_STATEMENT,
+                rationale=(
+                    f"Historical statement: matches {sup} (declared non-current) and is "
+                    f"reported as past; current evidence {con} differs as expected"
+                ),
+                supporting_item_ids=r.supporting_item_ids,
+                contradicting_item_ids=frozenset(),
+            ))
+        else:
+            out.append(r)
+    return out
+
+
 def apply_m8_conflict_context(
     claim_results: list[ClaimVerificationResult],
     validation_summary: ValidationSummary | None,
@@ -201,6 +360,10 @@ def apply_m8_conflict_context(
     candidate_items: dict[str, tuple[EvidenceItemId, EvidenceItemId]] = {
         c.candidate_id: (c.item_id_a, c.item_id_b) for c in bundle.conflict_candidates
     }
+
+    claim_results = _resolve_superseded_sources(
+        claim_results, validation_summary, bundle, candidate_items
+    )
 
     conflicted_items: set[EvidenceItemId] = set()
     for resolution in validation_summary.resolutions:

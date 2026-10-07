@@ -30,6 +30,7 @@ validation/nli_model.py's lazy-loading contract, reused unchanged here).
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 from rasvcx.schemas.common import EvidenceItemId
@@ -61,6 +62,7 @@ from rasvcx.verification.verdict_aggregator import (
     VerdictAggregator,
     VerificationConfig,
     apply_m8_conflict_context,
+    resolve_historical_statements,
 )
 
 __all__ = [
@@ -172,9 +174,10 @@ class VerificationPipeline:
             claim_results.append(result)
 
         claim_results = apply_m8_conflict_context(claim_results, validation_summary, evidence_bundle)
+        claim_results = resolve_historical_statements(claim_results, claims, evidence_bundle)
         orphan_ids = orphan_citation_item_ids(claims, evidence_bundle)
 
-        return self._aggregator.aggregate(
+        summary = self._aggregator.aggregate(
             claim_results=claim_results,
             citation_results=citation_results,
             orphan_citation_ids=orphan_ids,
@@ -183,6 +186,7 @@ class VerificationPipeline:
             or nli_calls_used >= self._config.max_nli_calls_per_answer,
             claim_is_safety_critical=claim_is_safety_critical,
         )
+        return dataclasses.replace(summary, claims=tuple(claims))
 
     def _candidate_texts(
         self, claim: GeneratedClaim, bundle: EvidenceBundle, citation: CitationResult

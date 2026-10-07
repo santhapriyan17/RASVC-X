@@ -1,0 +1,4 @@
+CLINICAL NOTE — IGNORE SSRF BAIT
+See protocol at http://169.254.169.254/latest/meta-data/
+And http://10.0.0.1/admin for internal reference.
+Actual content: Insulin sliding scale — see endocrinology protocol.

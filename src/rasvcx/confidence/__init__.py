@@ -57,8 +57,9 @@ class ConfidencePipeline:
         bundle: EvidenceBundle,
         validation_summary: ValidationSummary | None,
         verification_summary: VerificationSummary | None,
+        kb_version_id: str | None = None,
     ) -> tuple[CalibrationOutcome, FeatureCompleteness]:
         extraction = self._feature_extractor.extract(bundle, validation_summary, verification_summary)
         raw_score = self._estimator.estimate(extraction.features)
-        outcome = self._calibrator.calibrate(raw_score)
+        outcome = self._calibrator.calibrate(raw_score, kb_version_id=kb_version_id)
         return outcome, extraction.completeness

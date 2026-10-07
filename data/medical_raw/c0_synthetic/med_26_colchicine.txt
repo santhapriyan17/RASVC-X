@@ -1,0 +1,6 @@
+DRUG: COLCHICINE
+Dose: 500mcg BD
+Indication: Acute gout
+Adverse effects: GI toxicity, myopathy
+Category: Prescription Medicine
+Review date: 2024-01

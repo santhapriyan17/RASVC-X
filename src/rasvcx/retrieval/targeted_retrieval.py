@@ -96,6 +96,9 @@ class TargetedRetrievalResult:
         new_chunk_ids:        Chunk IDs new to this pass (not in existing).
         targeted_bm25_count:  BM25 result count from targeted pass.
         targeted_dense_count: Dense result count from targeted pass.
+        dense_error:          Set when a dense retriever was configured but
+                              failed; the pass then holds BM25 results only
+                              and the caller must surface the degradation.
     """
 
     merged_results: list[FusedResult]
@@ -103,6 +106,7 @@ class TargetedRetrievalResult:
     new_chunk_ids: frozenset[ChunkId]
     targeted_bm25_count: int
     targeted_dense_count: int
+    dense_error: str | None = None
 
 
 def _augment_query(query_text: str) -> str:
@@ -203,15 +207,16 @@ def run_targeted_retrieval(
     logger.debug("Targeted BM25: %d results", len(targeted_bm25))
 
     targeted_dense: list[DenseResult] = []
+    dense_error: str | None = None
     if dense_retriever is not None:
         try:
             targeted_dense = dense_retriever.query(augmented, top_k=config.dense_top_k)
             logger.debug("Targeted dense: %d results", len(targeted_dense))
         except QdrantUnavailableError as exc:
-            logger.warning(
-                "Targeted dense retrieval failed (Qdrant unavailable): %s — "
-                "continuing with BM25-only targeted results", exc,
-            )
+            # Not absorbed: reported to the caller via dense_error so the
+            # supplementary pass is explicitly labelled BM25-only.
+            dense_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("Targeted dense retrieval failed: %s", exc)
 
     if not targeted_bm25 and not targeted_dense:
         logger.warning("Targeted retrieval produced no results; returning existing unchanged")
@@ -221,6 +226,7 @@ def run_targeted_retrieval(
             new_chunk_ids=frozenset(),
             targeted_bm25_count=0,
             targeted_dense_count=0,
+            dense_error=dense_error,
         )
 
     merged = _merge_three_ranked_lists(
@@ -254,4 +260,5 @@ def run_targeted_retrieval(
         new_chunk_ids=new_ids,
         targeted_bm25_count=len(targeted_bm25),
         targeted_dense_count=len(targeted_dense),
+        dense_error=dense_error,
     )

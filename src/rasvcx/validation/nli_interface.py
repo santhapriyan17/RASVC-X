@@ -68,6 +68,12 @@ class NLIService:
     def __init__(self, backend: NLIBackend | None) -> None:
         self._backend = backend
 
+    @property
+    def backend(self) -> NLIBackend | None:
+        """The injected backend (for readiness reporting; never call
+        predict on it directly -- use predict_safe)."""
+        return self._backend
+
     def is_available(self) -> bool:
         if self._backend is None:
             return False
@@ -87,6 +93,9 @@ class NLIService:
         """
         if self._backend is None:
             return None
+        import time as _time
+
+        t0 = _time.perf_counter()
         try:
             if not self._backend.is_available():
                 return None
@@ -97,6 +106,26 @@ class NLIService:
             # Defensive: a third-party backend raising something other
             # than NLIUnavailableError must still degrade gracefully.
             return None
+        finally:
+            # Per-thread accounting (one request = one worker thread) so the
+            # orchestrator can report NLI inference time as its own stage.
+            acc = _NLI_TIME.__dict__
+            acc["seconds"] = acc.get("seconds", 0.0) + (_time.perf_counter() - t0)
+            acc["calls"] = acc.get("calls", 0) + 1
+
+    @staticmethod
+    def take_thread_timing() -> tuple[float, int]:
+        """(seconds, calls) of NLI inference on this thread since the last
+        take, then reset."""
+        acc = _NLI_TIME.__dict__
+        out = (acc.get("seconds", 0.0), acc.get("calls", 0))
+        acc["seconds"], acc["calls"] = 0.0, 0
+        return out
+
+
+import threading as _threading  # noqa: E402
+
+_NLI_TIME = _threading.local()
 
 
 __all__ = [

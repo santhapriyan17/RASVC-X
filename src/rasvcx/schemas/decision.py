@@ -23,6 +23,26 @@ class DecisionAction(str, Enum):
     REGENERATE = "regenerate"
     ABSTAIN = "abstain"
 
+    @property
+    def canonical(self) -> str:
+        """The canonical external decision name for this internal action.
+
+        The enum values above are internal identifiers.  Everything that
+        leaves the process (API responses, UI, evaluation records) uses
+        exactly one of:
+            ANSWER | ANSWER_WITH_WARNING | REPAIR | REGENERATE | ABSTAIN
+        """
+        return CANONICAL_DECISIONS[self.value]
+
+
+CANONICAL_DECISIONS: dict[str, str] = {
+    "answer": "ANSWER",
+    "warning": "ANSWER_WITH_WARNING",
+    "repair": "REPAIR",
+    "regenerate": "REGENERATE",
+    "abstain": "ABSTAIN",
+}
+
 
 class CorrectiveTarget(str, Enum):
     """Where a REPAIR or REGENERATE action re-enters the pipeline.

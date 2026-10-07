@@ -68,6 +68,54 @@ def _mask_spans(text: str, pattern: re.Pattern[str]) -> str:
     return pattern.sub(_blank, text)
 
 
+_LIST_MARKER_RE = re.compile(r"^[ \t]*(?:[*+\-\u2022]|\d{1,3}[.)]|#{1,6})[ \t]+", re.MULTILINE)
+_EMPHASIS_RE = re.compile(r"\*{1,3}|_{2,3}|^[ \t]*>+", re.MULTILINE)
+_TERMINAL = ".!?"
+
+
+def _mask_markdown_structure(text: str) -> str:
+    """Turn markdown layout into sentence boundaries, preserving offsets.
+
+    A model that answers with headings and bullet lists produces lines, not
+    sentences: without this, a whole list ("... include: * A ... * B ...")
+    is one "claim", and its many unrelated numbers and qualifiers are then
+    verified as if they were a single statement.
+
+    Every substitution is same-length, so claim spans still index into the
+    original answer:
+      - list / heading markers and emphasis characters become spaces;
+      - a line break that ends a line without terminal punctuation, and is
+        followed by a list item or a blank line, becomes a full stop, so
+        each list item and each paragraph is its own sentence.
+    """
+    chars = list(text)
+    marker_starts: set[int] = set()
+    for match in _LIST_MARKER_RE.finditer(text):
+        marker_starts.add(match.start())
+        for i in range(match.start(), match.end()):
+            if chars[i] not in "\r\n":
+                chars[i] = " "
+    for match in _EMPHASIS_RE.finditer(text):
+        for i in range(match.start(), match.end()):
+            if chars[i] not in "\r\n":
+                chars[i] = " "
+
+    for i, ch in enumerate(text):
+        if ch != "\n":
+            continue
+        next_line_start = i + 1
+        starts_item = next_line_start in marker_starts
+        blank_follows = next_line_start >= len(text) or text[next_line_start] in "\r\n"
+        if not (starts_item or blank_follows):
+            continue  # soft wrap inside a paragraph: same sentence
+        j = i - 1
+        while j >= 0 and chars[j] in " \t\r":
+            j -= 1
+        if j >= 0 and chars[j] not in _TERMINAL and chars[j] != "\n":
+            chars[i] = "."
+    return "".join(chars)
+
+
 def _mask_code_spans(text: str) -> str:
     """Replace fenced/inline code content with same-length whitespace.
 
@@ -197,6 +245,7 @@ class GeneratedClaimExtractor:
             if token.strip()
         ]
         citation_masked = _mask_spans(code_masked, _CITATION_MARKER_RE)
+        citation_masked = _mask_markdown_structure(citation_masked)
 
         sentences_with_spans = self._split_with_spans(citation_masked)
         marker_assignments = self._assign_markers_to_sentences(markers, sentences_with_spans)
@@ -204,7 +253,14 @@ class GeneratedClaimExtractor:
         claims: list[GeneratedClaim] = []
         for index, (sentence, span) in enumerate(sentences_with_spans):
             claim_text_only = re.sub(r"[ \t]{2,}", " ", sentence).strip()
+            # A line break promoted to a full stop can leave ":." or a
+            # space before the stop; tidy the text that is shown and verified.
+            claim_text_only = re.sub(r"\s+([.!?])$", r"\1", claim_text_only)
             if len(claim_text_only) < self._min_claim_length:
+                continue
+            if claim_text_only.rstrip(".").rstrip().endswith(":"):
+                # A lead-in such as "The indications include:" introduces a
+                # list; it asserts nothing by itself and is not a claim.
                 continue
 
             normalized = normalize_claim_text(claim_text_only)

@@ -1,0 +1,250 @@
+# config/research_hybrid.yaml
+#
+# RASVC-X research_hybrid execution profile.
+#
+# This is the intended default profile for research and demonstration.
+# It enables all core capabilities:
+#   - BM25 sparse retrieval + Qdrant dense retrieval + RRF fusion
+#   - Cross-encoder reranking
+#   - Selective NLI validation
+#   - Real Gemini LLM provider
+#   - Full verification, confidence, and decision pipeline
+#
+# PREREQUISITES:
+#   pip install -e ".[research,gemini]"
+#   Qdrant, in one of three modes (retrieval.qdrant_mode / RASVCX_QDRANT_MODE):
+#     server    docker run -p 6333:6333 qdrant/qdrant      (default)
+#     embedded  no service; persisted under retrieval.qdrant_path
+#     memory    no service; dense index rebuilt at every startup
+#
+# STARTUP (Windows PowerShell):
+#   python -m rasvcx          # loads .env (RASVCX_LLM_API_KEY, ...)
+#
+# FAILURE BEHAVIOUR (no silent fallback):
+#   Missing RASVCX_LLM_API_KEY     -> ConfigurationError at startup
+#   Qdrant unreachable / unusable  -> ConfigurationError at startup
+#   Reranker or NLI model unloadable -> ConfigurationError at startup
+#   Knowledge base inconsistent (BM25 / store / Qdrant) -> ConfigurationError
+#   Any of the above prevents the server from binding to the port.
+#   At request time a failing stage produces an explicit ABSTAIN with the
+#   failed stage named in the response; it is never papered over.
+#
+# SCHEMA VERSION: must match _CONFIG_SCHEMA_VERSION in config/loader.py
+schema_version: 1
+
+execution_mode: research_hybrid
+
+# ---------------------------------------------------------------------------
+# Seed corpus (built by scripts/build_index.py).
+# Served as the bootstrap knowledge-base version until the first ingestion
+# job publishes a version; from then on ingestion.active_version_path
+# decides which version is loaded at startup.
+# ---------------------------------------------------------------------------
+corpus:
+  store_path: corpus/corpus_store.json
+  bm25_path: corpus/bm25_index.pkl
+  manifest_path: corpus/manifest.json
+  smoke_corpus_path: corpus/smoke_corpus.json
+
+# ---------------------------------------------------------------------------
+# Chunking — must match the chunking used when the corpus was built.
+# Changing these values requires re-ingesting the corpus.
+# ---------------------------------------------------------------------------
+chunking:
+  strategy: fixed
+  max_tokens: 256
+  overlap: 32
+
+# ---------------------------------------------------------------------------
+# Retrieval — hybrid BM25 + Qdrant dense + RRF.
+# Each published knowledge-base version owns its own Qdrant collection,
+# named "<qdrant_collection>_<version_id>". A request leases one version and
+# uses that version's BM25 index and Qdrant collection together.
+# ---------------------------------------------------------------------------
+retrieval:
+  mode: hybrid
+  bm25_top_k: 20
+  dense_top_k: 20
+  rrf_k: 60
+  rrf_top_k: 10
+  dense_model_name: sentence-transformers/all-MiniLM-L6-v2
+  qdrant_mode: server        # server | embedded | memory
+  qdrant_host: localhost
+  qdrant_port: 6333
+  qdrant_path: data/qdrant   # used by qdrant_mode: embedded
+  qdrant_collection: rasvcx_chunks
+  targeted_bm25_top_k: 10
+  targeted_dense_top_k: 10
+  targeted_rrf_k: 60
+
+# ---------------------------------------------------------------------------
+# Reranking — required in research_hybrid mode (enforced by settings.py).
+# cross-encoder/ms-marco-MiniLM-L-6-v2 runs on CPU without GPU.
+# ---------------------------------------------------------------------------
+reranker:
+  enabled: true
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  max_candidates: 30
+  batch_size: 32
+  device: null  # null = auto-select (CPU if no CUDA)
+  # Evidence below this cross-encoder score is dropped when better evidence
+  # exists (ms-marco logits: > 0 is "more likely relevant than not").
+  min_relevance_score: 0.0
+
+# ---------------------------------------------------------------------------
+# Sufficiency gate.
+# min_scored_items: 1 requires at least one reranker score (vs 0 in
+# offline_test where reranker is disabled). Restores the standard gate.
+# ---------------------------------------------------------------------------
+sufficiency:
+  min_evidence_items: 2
+  min_scored_items: 1
+  min_top_rerank_score: 0.0
+  min_rerank_score_margin: 0.05
+  max_unknown_provenance_ratio_high_risk: 0.5
+  min_source_diversity_high_risk: 2
+  high_risk_score_threshold: 0.7
+  # Skip the "ambiguous top result" margin check when the best passage is
+  # strongly relevant: several equally relevant sources are corroboration or
+  # a conflict for validation to examine, not a reason to stop.
+  margin_check_below_top_score: 2.0
+  # Source diversity is corroboration, not a universal requirement: a single
+  # dated regulatory document, clinical guideline or drug label that the
+  # reranker scores as strongly relevant (>= 2.0) may stand alone. The
+  # margin and unknown-provenance checks above, validation, post-generation
+  # verification and the high-risk decision thresholds all still apply.
+  diversity_waiver_source_types: [regulatory_document, clinical_guideline, drug_label]
+  diversity_waiver_min_top_score: 2.0
+
+# ---------------------------------------------------------------------------
+# NLI — required in research_hybrid mode (enforced by settings.py).
+# deberta-large-mnli is a general-domain MNLI model (not biomedical).
+# First run downloads the model (~1.6 GB) from HuggingFace. It is loaded at
+# startup, so a model that cannot be loaded stops the server.
+# Runs on CPU; set device: cuda if a GPU is available.
+# ---------------------------------------------------------------------------
+nli:
+  enabled: true
+  model_name: microsoft/deberta-large-mnli
+  device: cpu
+
+# ---------------------------------------------------------------------------
+# Validation parameters — unchanged from base defaults.
+# ---------------------------------------------------------------------------
+validation:
+  numeric_relative_tolerance: 0.01
+  min_shared_tokens_for_comparison: 2
+  max_claim_pairs_per_candidate: 25
+  max_candidates: 500
+  inconclusive_confidence_threshold: 0.6
+
+# ---------------------------------------------------------------------------
+# Verification parameters — unchanged from base defaults.
+# ---------------------------------------------------------------------------
+verification:
+  max_claims: 200
+  max_nli_calls_per_answer: 20
+  max_fallback_evidence_candidates: 5
+  unsupported_fraction_for_partial: 0.2
+  unsupported_fraction_for_unverified: 0.5
+
+# ---------------------------------------------------------------------------
+# Confidence weights — sum must equal 1.0 (enforced downstream).
+# ---------------------------------------------------------------------------
+confidence:
+  evidence_agreement: 0.20
+  claim_verification_support: 0.25
+  contradiction_penalty: 0.20
+  provenance_quality: 0.10
+  source_diversity: 0.05
+  retrieval_quality: 0.05
+  rerank_quality: 0.05
+  resolution_uncertainty_penalty: 0.10
+
+# ---------------------------------------------------------------------------
+# Decision thresholds — unchanged from base defaults.
+# ---------------------------------------------------------------------------
+decision:
+  answer_min: 0.75
+  warning_min: 0.55
+  regenerate_min: 0.35
+  high_risk_answer_min: 0.85
+  high_risk_warning_min: 0.65
+  high_risk_regenerate_min: 0.45
+  high_risk_threshold: 0.6
+
+# ---------------------------------------------------------------------------
+# LLM — Gemini provider via google-genai SDK.
+# api_key is NEVER stored here. Set RASVCX_LLM_API_KEY env var.
+# Missing key -> ConfigurationError at startup (no silent stub fallback).
+# model_name must be a model the Gemini API currently serves; a retired
+# model makes every generation fail (reported as ABSTAIN, generation_error).
+# Measured with this project's key on 2026-10-06:
+#   gemini-2.0-flash       404 NOT_FOUND (retired)
+#   gemini-3.8-flash       503 / 504 on most requests (provider overloaded)
+#   gemini-3.6-flash       answered about half of the requests, 503 otherwise
+#   gemini-3.5-flash-lite  answered every request (~1 s)
+# The model is chosen for availability; switch to a larger model here (or
+# with RASVCX_LLM_MODEL) when the provider serves it reliably. Whatever the
+# model, its answer is verified claim-by-claim before it is returned.
+# stub_response is irrelevant in this mode but kept for schema completeness.
+# ---------------------------------------------------------------------------
+llm:
+  provider: gemini
+  model_name: gemini-3.5-flash-lite
+  temperature: 0.0
+  max_tokens: 4096      # includes the model's thinking tokens
+  timeout_seconds: 60.0
+  max_retries: 2        # transient 429/500/503 only
+  stub_response: ""
+
+# ---------------------------------------------------------------------------
+# Pipeline orchestrator.
+# ---------------------------------------------------------------------------
+pipeline:
+  max_corrective_attempts: 2
+  max_context_chars: 100000
+
+# ---------------------------------------------------------------------------
+# HTTP API.
+# max_request_bytes applies to query request bodies only (JSON).
+# Upload size limits are enforced separately in M17 ingestion routes.
+# Single worker required: --workers 1 (SQLite job store constraint).
+# ---------------------------------------------------------------------------
+api:
+  host: "0.0.0.0"
+  port: 8000
+  max_workers: 4
+  max_queue_depth: 8
+  request_timeout_seconds: 120.0
+  max_request_bytes: 65536
+  max_query_chars: 2048
+  require_auth: false
+  # Answer cache (per knowledge-base version; failed/degraded results are
+  # never cached). 0 disables.
+  cache_size: 512
+  cache_ttl_seconds: 3600
+
+# ---------------------------------------------------------------------------
+# Ingestion / knowledge-base versions.
+# Upload limits are per format and reflect how each parser uses memory
+# (see ingestion/security.py). gc_delay_seconds + keep_versions are the
+# retention policy applied to superseded versions with no active lease.
+# ---------------------------------------------------------------------------
+ingestion:
+  corpus_versions_dir: corpus
+  active_version_path: corpus/active_version.json
+  db_path: corpus/ingestion_jobs.db
+  max_upload_bytes: 524288000        # 500 MB hard cap on any upload
+  parser_timeout_seconds: 300.0
+  max_pdf_pages: 10000
+  max_csv_rows: 10000000
+  max_xlsx_rows: 1000000
+  gc_delay_seconds: 300.0
+  keep_versions: 2
+  max_source_response_bytes: 104857600
+  source_connect_timeout_seconds: 10.0
+  source_read_timeout_seconds: 60.0
+  allowed_url_schemes: [https]
+  scheduled_sync_interval_seconds: 3600.0
+  max_redirects: 3

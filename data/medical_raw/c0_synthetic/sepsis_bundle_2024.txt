@@ -1,0 +1,23 @@
+SEPSIS MANAGEMENT BUNDLE — Clinical Guideline v2024
+Source: Internal Medicine Department
+
+DEFINITION
+Sepsis is life-threatening organ dysfunction caused by a dysregulated host
+response to infection. SOFA score ≥2 with suspected infection.
+
+HOUR-1 BUNDLE (Surviving Sepsis Campaign 2021)
+1. Measure lactate; remeasure if initial > 2 mmol/L.
+2. Obtain blood cultures BEFORE antibiotics.
+3. Administer broad-spectrum antibiotics within 1 hour.
+4. 30 mL/kg crystalloid bolus for hypotension or lactate ≥ 4 mmol/L.
+5. Vasopressors if MAP < 65 mmHg after fluid resuscitation.
+
+ANTIBIOTIC SELECTION
+Community-acquired: piperacillin-tazobactam 4.5g IV q6h + vancomycin.
+Hospital-acquired (MRSA risk): add vancomycin or linezolid.
+Immunocompromised: add antifungal coverage (micafungin 100mg IV daily).
+
+MONITORING
+Lactate trending every 2 hours until < 2 mmol/L.
+MAP target ≥ 65 mmHg. Urine output ≥ 0.5 mL/kg/hr.
+SOFA reassessment every 6 hours.

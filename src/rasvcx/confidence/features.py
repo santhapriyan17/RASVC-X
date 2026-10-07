@@ -60,16 +60,21 @@ class FeatureExtractor:
         items = list(bundle.evidence_items.values())
         had_evidence = len(items) > 0
 
-        retrieval_quality = self._mean_clamped(
-            [it.retrieval_score for it in items]
-        ) if had_evidence else 0.0
+        retrieval_quality = self._retrieval_quality(bundle, items) if had_evidence else 0.0
 
         rerank_scores = [it.rerank_score for it in items if it.rerank_score is not None]
         had_rerank_scores = len(rerank_scores) > 0
-        rerank_quality = self._mean_clamped(rerank_scores) if had_rerank_scores else retrieval_quality
+        rerank_quality = self._rerank_quality(rerank_scores) if had_rerank_scores else retrieval_quality
 
-        provenance_quality, had_provenance = self._provenance_quality(items)
-        source_diversity = self._source_diversity(items)
+        # Provenance quality and corroboration describe the evidence the
+        # ANSWER rests on (M9's supporting items, minus withdrawn/superseded
+        # sources) -- an irrelevant guideline in the candidate list must not
+        # raise source diversity.  All items when no support is identified.
+        from rasvcx.provenance.evidence_roles import answer_basis
+
+        basis = answer_basis(items, verification_summary)
+        provenance_quality, had_provenance = self._provenance_quality(basis)
+        source_diversity = self._source_diversity(basis)
 
         evidence_agreement, contradiction_penalty, resolution_uncertainty_penalty, had_validation = (
             self._validation_signals(validation_summary, had_evidence)
@@ -96,6 +101,48 @@ class FeatureExtractor:
         )
         return FeatureExtractionResult(features=features, completeness=completeness)
 
+    def _retrieval_quality(self, bundle: EvidenceBundle, items: list) -> float:
+        """How well retrieval agreed with itself, in [0, 1].
+
+        In hybrid mode this is the fraction of fused results that BM25 and
+        dense retrieval both returned: lexical and semantic search
+        independently pointing at the same passages.
+
+        The fused RRF score is not used for this.  RRF scores are bounded by
+        about 2 / (rrf_k + 1) (~0.03 for rrf_k = 60), so a mean of them is
+        ~0.02 for every query -- a constant, not a signal -- and it capped
+        the achievable confidence of a perfect answer.  Without a hybrid
+        trace (BM25-only, or a caller-supplied retrieval function) the
+        clamped mean of the retrieval scores is kept.
+        """
+        trace = getattr(bundle, "retrieval_trace", None) or {}
+        fused = trace.get("rrf_fused")
+        both = trace.get("rrf_from_both")
+        if (
+            trace.get("mode") == "hybrid"
+            and isinstance(fused, int) and fused > 0
+            and isinstance(both, int)
+        ):
+            return max(0.0, min(1.0, both / fused))
+        return self._mean_clamped([it.retrieval_score for it in items])
+
+    @staticmethod
+    def _rerank_quality(scores: list[float]) -> float:
+        """Relevance of the best evidence, in [0, 1].
+
+        Cross-encoder scores are logits (roughly -11 .. +11), not
+        probabilities.  Each is mapped through the logistic function and the
+        TOP three are averaged: what matters is whether strong evidence was
+        found, not how irrelevant the tail of the candidate list is.
+        (Clamping the raw mean of all logits to [0, 1] -- the previous
+        behaviour -- made the feature 0 or 1 almost at random.)
+        """
+        finite = sorted((v for v in scores if math.isfinite(v)), reverse=True)[:3]
+        if not finite:
+            return 0.0
+        relevance = [1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, v)))) for v in finite]
+        return sum(relevance) / len(relevance)
+
     @staticmethod
     def _mean_clamped(values: list[float]) -> float:
         # NaN/+-inf must never reach a mean: min()/max() do not reject NaN
@@ -120,10 +167,28 @@ class FeatureExtractor:
 
     @staticmethod
     def _source_diversity(items: list) -> float:
+        """Independent corroboration, in [0, 1].
+
+            0.0  everything comes from one document
+            0.5  several documents of a single source type
+            1.0  at least two source types (e.g. a label and a guideline)
+
+        The previous formula, (types - 1) / (items - 1), divided by the
+        NUMBER OF CHUNKS: ten chunks from a label and a guideline scored
+        0.11, and the maximum was unreachable for any realistic evidence
+        set.  Documents are identified by SourceRef.doc_id; items without
+        one count as a single unknown document per source type.
+        """
         if len(items) <= 1:
             return 0.0
-        distinct = len({it.provenance.source_type for it in items})
-        return max(0.0, min(1.0, (distinct - 1) / (len(items) - 1)))
+        types = {it.provenance.source_type for it in items}
+        if len(types) >= 2:
+            return 1.0
+        documents = {
+            getattr(getattr(it, "source", None), "doc_id", None) for it in items
+        }
+        documents.discard(None)
+        return 0.5 if len(documents) >= 2 else 0.0
 
     @staticmethod
     def _validation_signals(

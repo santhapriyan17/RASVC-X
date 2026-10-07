@@ -1,0 +1,6 @@
+DRUG: CO-AMOXICLAV
+Dose: 625mg TDS
+Indication: Polymicrobial infection
+Adverse effects: Cholestatic jaundice
+Category: Prescription Medicine
+Review date: 2024-01

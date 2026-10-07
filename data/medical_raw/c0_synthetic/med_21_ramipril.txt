@@ -1,0 +1,6 @@
+DRUG: RAMIPRIL
+Dose: 2.5mg–10mg daily
+Indication: HF/HTN/CKD
+Adverse effects: Cough, renal impairment
+Category: Prescription Medicine
+Review date: 2024-01

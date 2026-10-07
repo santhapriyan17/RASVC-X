@@ -10,8 +10,9 @@ Design constraints:
 - Qdrant client is created once and reused.
 - Scores returned are Qdrant cosine similarity scores in [-1, 1]; they are
   NOT probabilities.  Do not interpret as confidence values.
-- Qdrant unavailability raises QdrantUnavailableError, which the pipeline
-  must handle (fall back to BM25-only where appropriate).
+- Qdrant unavailability raises QdrantUnavailableError.  The retrieval
+  bridge propagates it: a hybrid request never silently degrades to
+  BM25-only.
 
 CORRECTION (continuation-session review finding #4):
 Qdrant point IDs are now derived from a deterministic digest of the
@@ -36,7 +37,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from dataclasses import dataclass
+from typing import Any, Sequence
 
 from rasvcx.schemas.common import ChunkId
 
@@ -44,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, PointStruct, ScoredPoint, VectorParams
+    from qdrant_client.models import Distance, PointStruct, VectorParams
     _QDRANT_AVAILABLE = True
 except ImportError:
     _QDRANT_AVAILABLE = False
@@ -90,37 +93,231 @@ class DenseResult:
     score: float
 
 
-class DenseRetriever:
+QDRANT_MODES = ("server", "embedded", "memory")
+
+
+class DenseBackend:
+    """One sentence-transformer encoder + one Qdrant client, shared by every
+    knowledge-base version.
+
+    Each published KB version owns its own Qdrant collection; this object
+    builds those collections and hands out DenseRetriever views bound to
+    one collection.  The encoder is loaded exactly once per process.
+
+    Qdrant modes (all use the same qdrant-client API):
+      server    Qdrant service at host:port.
+      embedded  qdrant-client local mode persisted under `path` (single
+                process only).
+      memory    qdrant-client local mode, in-process and non-persistent:
+                collections must be rebuilt after every restart.
+
+    Local modes are not thread-safe, so every client call is serialised
+    with a lock; the lock is uncontended overhead in server mode.
+    """
+
     def __init__(
         self,
         model_name: str,
-        qdrant_host: str,
-        qdrant_port: int,
-        collection_name: str,
         *,
-        prefer_grpc: bool = False,
-        grpc_port: int = 6334,
+        mode: str = "server",
+        host: str = "localhost",
+        port: int = 6333,
+        path: str | None = None,
+        encoder: Any | None = None,
+        client: Any | None = None,
     ) -> None:
-        if not _ST_AVAILABLE:
-            raise ImportError("sentence-transformers is required for DenseRetriever.")
-        if not _QDRANT_AVAILABLE:
-            raise ImportError("qdrant-client is required for DenseRetriever.")
+        if mode not in QDRANT_MODES:
+            raise ValueError(f"qdrant mode must be one of {QDRANT_MODES}, got {mode!r}")
+        if encoder is None and not _ST_AVAILABLE:
+            raise ImportError("sentence-transformers is required for dense retrieval.")
+        if client is None and not _QDRANT_AVAILABLE:
+            raise ImportError("qdrant-client is required for dense retrieval.")
+        if mode == "embedded" and not path and client is None:
+            raise ValueError("qdrant mode 'embedded' requires a storage path")
 
         self._model_name = model_name
-        self._collection_name = collection_name
+        self._mode = mode
+        self._lock = threading.RLock()
 
-        logger.info("Loading sentence-transformer model: %s", model_name)
-        self._encoder = SentenceTransformer(model_name)
-        self._vector_size: int = self._encoder.get_sentence_embedding_dimension()
+        if encoder is None:
+            logger.info("Loading sentence-transformer model: %s", model_name)
+            encoder = SentenceTransformer(model_name)
+        self._encoder = encoder
+        self._vector_size = int(_embedding_dimension(encoder))
         logger.info("Encoder ready: model=%s vector_size=%d", model_name, self._vector_size)
 
-        logger.info("Connecting to Qdrant: host=%s port=%d grpc=%s", qdrant_host, qdrant_port, prefer_grpc)
-        self._client = QdrantClient(
-            host=qdrant_host,
-            port=qdrant_port,
-            prefer_grpc=prefer_grpc,
-            grpc_port=grpc_port,
-        )
+        if client is None:
+            if mode == "server":
+                logger.info("Connecting to Qdrant server: host=%s port=%d", host, port)
+                client = QdrantClient(host=host, port=port, timeout=10)
+            elif mode == "embedded":
+                logger.info("Opening embedded Qdrant at %s", path)
+                client = QdrantClient(path=path)
+            else:
+                logger.info("Using in-memory Qdrant (non-persistent)")
+                client = QdrantClient(":memory:")
+        self._client = client
+
+    # -- introspection -------------------------------------------------------
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def vector_size(self) -> int:
+        return self._vector_size
+
+    def list_collections(self) -> list[str]:
+        """Collection names. Raises QdrantUnavailableError if unreachable."""
+        try:
+            with self._lock:
+                return [c.name for c in self._client.get_collections().collections]
+        except Exception as exc:
+            raise QdrantUnavailableError(f"Cannot reach Qdrant ({self._mode}): {exc}") from exc
+
+    def collection_count(self, collection_name: str) -> int | None:
+        """Exact point count, or None if the collection does not exist."""
+        if collection_name not in self.list_collections():
+            return None
+        try:
+            with self._lock:
+                return int(self._client.count(collection_name=collection_name, exact=True).count)
+        except Exception as exc:
+            raise QdrantUnavailableError(
+                f"Qdrant count failed for collection '{collection_name}': {exc}"
+            ) from exc
+
+    # -- embedding -----------------------------------------------------------
+
+    def embed(self, texts: Sequence[str], batch_size: int = 64) -> list[list[float]]:
+        with self._lock:
+            return self._encoder.encode(
+                list(texts), batch_size=batch_size,
+                show_progress_bar=False, normalize_embeddings=True,
+            ).tolist()
+
+    # -- collection lifecycle ------------------------------------------------
+
+    def build_collection(
+        self,
+        collection_name: str,
+        documents: Sequence[tuple[ChunkId, str]],
+        batch_size: int = 64,
+    ) -> int:
+        """(Re)create `collection_name` holding exactly `documents`.
+
+        Verifies the resulting point count equals len(documents) and raises
+        QdrantUnavailableError otherwise, so a partially-built dense index
+        can never be published.  Returns the point count.
+        """
+        if not documents:
+            raise ValueError("build_collection() requires at least one document")
+        try:
+            with self._lock:
+                if collection_name in [c.name for c in self._client.get_collections().collections]:
+                    self._client.delete_collection(collection_name)
+                self._client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=self._vector_size, distance=Distance.COSINE),
+                )
+        except Exception as exc:
+            raise QdrantUnavailableError(
+                f"Failed to create Qdrant collection '{collection_name}': {exc}"
+            ) from exc
+
+        total = len(documents)
+        for batch_start in range(0, total, batch_size):
+            batch = documents[batch_start: batch_start + batch_size]
+            vectors = self.embed([text for _, text in batch], batch_size=batch_size)
+            points = [
+                PointStruct(
+                    id=deterministic_point_id(str(cid)),
+                    vector=vec,
+                    payload={"chunk_id": cid},
+                )
+                for (cid, _), vec in zip(batch, vectors)
+            ]
+            try:
+                with self._lock:
+                    self._client.upsert(collection_name=collection_name, points=points)
+            except Exception as exc:
+                raise QdrantUnavailableError(
+                    f"Qdrant upsert failed (batch at {batch_start}): {exc}"
+                ) from exc
+
+        count = self.collection_count(collection_name)
+        if count != total:
+            raise QdrantUnavailableError(
+                f"Qdrant collection '{collection_name}' holds {count} points, "
+                f"expected {total}"
+            )
+        logger.info("Dense collection built: %s (%d points)", collection_name, total)
+        return total
+
+    def delete_collection(self, collection_name: str) -> None:
+        try:
+            with self._lock:
+                self._client.delete_collection(collection_name)
+        except Exception as exc:
+            raise QdrantUnavailableError(
+                f"Failed to delete Qdrant collection '{collection_name}': {exc}"
+            ) from exc
+
+    def retriever(self, collection_name: str) -> "DenseRetriever":
+        """A DenseRetriever view bound to one collection (no model load)."""
+        return DenseRetriever(backend=self, collection_name=collection_name)
+
+    # -- search --------------------------------------------------------------
+
+    def search(self, collection_name: str, query_text: str, top_k: int) -> list["DenseResult"]:
+        vector = self.embed([query_text])[0]
+        try:
+            with self._lock:
+                response = self._client.query_points(
+                    collection_name=collection_name,
+                    query=vector,
+                    limit=top_k,
+                    with_payload=True,
+                )
+        except Exception as exc:
+            raise QdrantUnavailableError(
+                f"Qdrant search failed for collection '{collection_name}': {exc}"
+            ) from exc
+        results: list[DenseResult] = []
+        for hit in response.points:
+            payload = hit.payload or {}
+            chunk_id = payload.get("chunk_id")
+            if chunk_id is None:
+                logger.warning("Qdrant hit missing 'chunk_id' in payload (id=%s); skipping", hit.id)
+                continue
+            results.append(DenseResult(chunk_id=ChunkId(chunk_id), score=float(hit.score)))
+        return results
+
+
+def _embedding_dimension(encoder: Any) -> int:
+    getter = getattr(encoder, "get_embedding_dimension", None) or getattr(
+        encoder, "get_sentence_embedding_dimension"
+    )
+    return getter()
+
+
+class DenseRetriever:
+    """Dense retrieval over ONE Qdrant collection (one KB version).
+
+    A thin view over a shared DenseBackend: constructing one never loads a
+    model or opens a connection.
+    """
+
+    def __init__(self, backend: DenseBackend, collection_name: str) -> None:
+        if not collection_name:
+            raise ValueError("DenseRetriever requires a collection name")
+        self._backend = backend
+        self._collection_name = collection_name
 
     @classmethod
     def build(
@@ -130,71 +327,28 @@ class DenseRetriever:
         qdrant_port: int,
         collection_name: str,
         *,
-        prefer_grpc: bool = False,
-        grpc_port: int = 6334,
+        mode: str = "server",
+        path: str | None = None,
     ) -> "DenseRetriever":
-        instance = cls(
-            model_name=model_name,
-            qdrant_host=qdrant_host,
-            qdrant_port=qdrant_port,
-            collection_name=collection_name,
-            prefer_grpc=prefer_grpc,
-            grpc_port=grpc_port,
+        """Create a backend and a retriever for `collection_name`, verifying
+        that Qdrant is reachable (raises QdrantUnavailableError otherwise)."""
+        backend = DenseBackend(
+            model_name, mode=mode, host=qdrant_host, port=qdrant_port, path=path
         )
-        instance._verify_collection()
-        return instance
-
-    def _verify_collection(self) -> None:
-        try:
-            collections = [c.name for c in self._client.get_collections().collections]
-        except Exception as exc:
-            raise QdrantUnavailableError(
-                f"Cannot reach Qdrant at collection '{self._collection_name}': {exc}"
-            ) from exc
-        if self._collection_name not in collections:
-            logger.warning("Qdrant collection '%s' does not exist yet.", self._collection_name)
+        backend.list_collections()
+        return cls(backend=backend, collection_name=collection_name)
 
     def ensure_collection(self) -> None:
-        try:
-            existing = [c.name for c in self._client.get_collections().collections]
-            if self._collection_name not in existing:
-                self._client.create_collection(
-                    collection_name=self._collection_name,
-                    vectors_config=VectorParams(size=self._vector_size, distance=Distance.COSINE),
-                )
-                logger.info("Created Qdrant collection '%s' (dim=%d, cosine)", self._collection_name, self._vector_size)
-        except Exception as exc:
+        if self._collection_name not in self._backend.list_collections():
             raise QdrantUnavailableError(
-                f"Failed to ensure Qdrant collection '{self._collection_name}': {exc}"
-            ) from exc
+                f"Qdrant collection '{self._collection_name}' does not exist"
+            )
 
     def upsert(self, documents: list[tuple[ChunkId, str]], batch_size: int = 64) -> None:
+        """(Re)build this retriever's collection from `documents`."""
         if not documents:
             raise ValueError("upsert() requires at least one document")
-        total = len(documents)
-        upserted = 0
-        for batch_start in range(0, total, batch_size):
-            batch = documents[batch_start: batch_start + batch_size]
-            chunk_ids = [cid for cid, _ in batch]
-            texts = [text for _, text in batch]
-            vectors = self._encoder.encode(
-                texts, batch_size=batch_size, show_progress_bar=False, normalize_embeddings=True
-            ).tolist()
-            points = [
-                PointStruct(
-                    id=deterministic_point_id(str(cid)),
-                    vector=vec,
-                    payload={"chunk_id": cid},
-                )
-                for cid, vec in zip(chunk_ids, vectors)
-            ]
-            try:
-                self._client.upsert(collection_name=self._collection_name, points=points)
-            except Exception as exc:
-                raise QdrantUnavailableError(f"Qdrant upsert failed (batch at {batch_start}): {exc}") from exc
-            upserted += len(batch)
-            logger.debug("Upserted %d / %d documents", upserted, total)
-        logger.info("Dense upsert complete: %d documents", total)
+        self._backend.build_collection(self._collection_name, documents, batch_size=batch_size)
 
     def query(self, query_text: str, top_k: int) -> list[DenseResult]:
         if top_k < 1:
@@ -202,33 +356,18 @@ class DenseRetriever:
         if not query_text.strip():
             logger.debug("Dense query is empty; returning empty results")
             return []
-        vector: list[float] = self._encoder.encode(
-            query_text, show_progress_bar=False, normalize_embeddings=True
-        ).tolist()
-        try:
-            hits: list[ScoredPoint] = self._client.search(
-                collection_name=self._collection_name,
-                query_vector=vector,
-                limit=top_k,
-                with_payload=True,
-            )
-        except Exception as exc:
-            raise QdrantUnavailableError(
-                f"Qdrant search failed for collection '{self._collection_name}': {exc}"
-            ) from exc
-        results: list[DenseResult] = []
-        for hit in hits:
-            payload = hit.payload or {}
-            chunk_id = payload.get("chunk_id")
-            if chunk_id is None:
-                logger.warning("Qdrant hit missing 'chunk_id' in payload (id=%s); skipping", hit.id)
-                continue
-            results.append(DenseResult(chunk_id=ChunkId(chunk_id), score=hit.score))
-        return results
+        return self._backend.search(self._collection_name, query_text, top_k)
+
+    def count(self) -> int | None:
+        return self._backend.collection_count(self._collection_name)
+
+    @property
+    def backend(self) -> DenseBackend:
+        return self._backend
 
     @property
     def vector_size(self) -> int:
-        return self._vector_size
+        return self._backend.vector_size
 
     @property
     def collection_name(self) -> str:

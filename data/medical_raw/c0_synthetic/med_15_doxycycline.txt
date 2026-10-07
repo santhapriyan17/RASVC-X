@@ -1,0 +1,6 @@
+DRUG: DOXYCYCLINE
+Dose: 100mg BD
+Indication: Atypicals/malaria
+Adverse effects: Photosensitivity
+Category: Prescription Medicine
+Review date: 2024-01

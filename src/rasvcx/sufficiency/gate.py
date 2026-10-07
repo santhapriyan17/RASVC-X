@@ -98,6 +98,27 @@ class SufficiencyGateConfig:
     max_unknown_provenance_ratio_high_risk: float = 0.5
     min_source_diversity_high_risk: int = 2
     high_risk_score_threshold: float = 0.7
+    # The margin check asks "is it unclear which passage is the best one?".
+    # That is a concern when the best passage is itself only weakly
+    # relevant.  When the top passages are ALL strongly relevant, a small
+    # margin means several sources address the question equally well --
+    # corroboration, or a disagreement that validation must examine -- and
+    # abstaining here would hide exactly the conflicts the pipeline exists
+    # to find (two near-identical protocols giving different doses score
+    # within 0.02 of each other).  When set, the margin check is skipped if
+    # top_rerank_score is at or above this value.  None = always check.
+    margin_check_below_top_score: float | None = None
+    # Source diversity is a corroboration signal, not proof of quality: one
+    # current, authoritative source that directly answers the question can
+    # be sufficient.  When both fields are set, the diversity shortfall is
+    # NOT a CONSERVATIVE reason if the top-reranked item is of one of these
+    # source types, has a known publication date, and scores at least
+    # diversity_waiver_min_top_score.  Every other high-risk check (margin,
+    # unknown provenance) and all downstream validation, verification and
+    # decision thresholds still apply.  Empty / None = diversity is always
+    # enforced (the original behaviour).
+    diversity_waiver_source_types: tuple[str, ...] = ()
+    diversity_waiver_min_top_score: float | None = None
 
     def __post_init__(self) -> None:
         if self.min_evidence_items < 0:
@@ -143,6 +164,11 @@ class SufficiencyResult:
     reasons: tuple[str, ...] = field(default_factory=tuple)
     recommend_targeted_retrieval: bool = False
     is_high_risk: bool = False
+    notes: tuple[str, ...] = field(default_factory=tuple)
+    """Checks that were evaluated and waived, with why (audit trail)."""
+    diversity_waived: bool = False
+    """The high-risk source-diversity check was waived for a single
+    authoritative source (downstream must not return an unqualified answer)."""
 
     def __post_init__(self) -> None:
         if self.verdict == SufficiencyVerdict.SUFFICIENT and self.recommend_targeted_retrieval:
@@ -190,8 +216,36 @@ def _evaluate_coverage(
     return reasons
 
 
+def _authoritative_single_source(
+    bundle: EvidenceBundle, config: SufficiencyGateConfig
+) -> str | None:
+    """Why the top evidence item may stand alone, or None if it may not."""
+    from rasvcx.schemas.common import UNKNOWN
+
+    if not config.diversity_waiver_source_types or config.diversity_waiver_min_top_score is None:
+        return None
+    scored = [it for it in bundle.evidence_items.values() if it.rerank_score is not None]
+    if not scored:
+        return None
+    top = max(scored, key=lambda it: it.rerank_score)  # type: ignore[arg-type,return-value]
+    source_type = getattr(top.provenance.source_type, "value", top.provenance.source_type)
+    if source_type not in config.diversity_waiver_source_types:
+        return None
+    if top.provenance.date is UNKNOWN:
+        return None
+    if top.rerank_score < config.diversity_waiver_min_top_score:  # type: ignore[operator]
+        return None
+    return (
+        f"source diversity not required: top evidence {top.item_id} is a dated "
+        f"{source_type} (date={top.provenance.date}) with rerank_score="
+        f"{top.rerank_score:.2f} >= {config.diversity_waiver_min_top_score}"
+    )
+
+
 def _evaluate_high_risk_concerns(
-    signals: SufficiencySignals, config: SufficiencyGateConfig
+    signals: SufficiencySignals,
+    config: SufficiencyGateConfig,
+    diversity_waiver: str | None = None,
 ) -> list[str]:
     """Additional concerns evaluated only for high-risk queries.
 
@@ -201,8 +255,14 @@ def _evaluate_high_risk_concerns(
     when the downstream stakes are higher.
     """
     reasons: list[str] = []
+    strongly_relevant = (
+        config.margin_check_below_top_score is not None
+        and signals.top_rerank_score is not None
+        and signals.top_rerank_score >= config.margin_check_below_top_score
+    )
     if (
-        signals.rerank_score_margin is not None
+        not strongly_relevant
+        and signals.rerank_score_margin is not None
         and signals.rerank_score_margin < config.min_rerank_score_margin
     ):
         reasons.append(
@@ -217,7 +277,10 @@ def _evaluate_high_risk_concerns(
             f"{config.max_unknown_provenance_ratio_high_risk} "
             f"(insufficient context to rule out conflict)"
         )
-    if signals.source_type_diversity < config.min_source_diversity_high_risk:
+    if (
+        signals.source_type_diversity < config.min_source_diversity_high_risk
+        and diversity_waiver is None
+    ):
         reasons.append(
             f"source_type_diversity={signals.source_type_diversity} < "
             f"min_source_diversity_high_risk="
@@ -265,7 +328,11 @@ def evaluate_sufficiency(
         coverage_reasons = _evaluate_coverage(signals, cfg)
 
         if high_risk:
-            risk_reasons = _evaluate_high_risk_concerns(signals, cfg)
+            waiver = None
+            if signals.source_type_diversity < cfg.min_source_diversity_high_risk:
+                waiver = _authoritative_single_source(bundle, cfg)
+            risk_reasons = _evaluate_high_risk_concerns(signals, cfg, waiver)
+            notes = (waiver,) if waiver else ()
             all_reasons = coverage_reasons + risk_reasons
             if all_reasons:
                 return SufficiencyResult(
@@ -274,11 +341,15 @@ def evaluate_sufficiency(
                     reasons=tuple(all_reasons),
                     recommend_targeted_retrieval=not signals.targeted_retrieval_used,
                     is_high_risk=True,
+                    notes=notes,
+                    diversity_waived=waiver is not None,
                 )
             return SufficiencyResult(
                 verdict=SufficiencyVerdict.SUFFICIENT,
                 signals=signals,
                 is_high_risk=True,
+                notes=notes,
+                diversity_waived=waiver is not None,
             )
 
         if coverage_reasons:

@@ -1,0 +1,14 @@
+LABORATORY REFERENCE RANGES
+Test                    | Low    | High   | Unit       | Critical Low | Critical High
+Haemoglobin (Male)      | 130    | 175    | g/L        | 70           | 200
+Haemoglobin (Female)    | 115    | 155    | g/L        | 70           | 200
+White Cell Count        | 4.0    | 11.0   | x10^9/L    | 1.0          | 30.0
+Platelets               | 150    | 400    | x10^9/L    | 50           | 1000
+Sodium                  | 135    | 145    | mmol/L     | 120          | 155
+Potassium               | 3.5    | 5.0    | mmol/L     | 2.5          | 6.5
+Creatinine (Male)       | 60     | 110    | µmol/L     | —            | 500
+eGFR                    | 60     | —      | mL/min     | —            | —
+ALT                     | 7      | 40     | U/L        | —            | 1000
+INR (therapeutic range) | 2.0    | 3.0    | ratio      | —            | 5.0
+HbA1c (target DM2)      | —      | 53     | mmol/mol   | —            | —
+Troponin I              | 0      | 0.04   | µg/L       | —            | >0.04=ACS

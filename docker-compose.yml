@@ -1,0 +1,52 @@
+# RASVC-X in research_hybrid mode with a real Qdrant server.
+#
+#   1. cp .env.example .env   and set RASVCX_LLM_API_KEY
+#   2. docker compose up --build
+#   3. open http://localhost:8000
+#
+# ./corpus must contain the seed index (corpus_store.json, bm25_index.pkl,
+# manifest.json) built by scripts/build_index.py. The server builds the
+# matching Qdrant collection itself on first start.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      # The image has no curl/wget; probe the HTTP port with bash.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  rasvcx:
+    build: .
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    environment:
+      # Secret: taken from the host environment / .env, never from the image.
+      RASVCX_LLM_API_KEY: ${RASVCX_LLM_API_KEY:?set RASVCX_LLM_API_KEY in .env}
+      RASVCX_AUTH_TOKEN: ${RASVCX_AUTH_TOKEN:-}
+      RASVCX_CONFIG: config/research_hybrid.yaml
+      RASVCX_QDRANT_MODE: server
+      RASVCX_QDRANT_HOST: qdrant
+      RASVCX_QDRANT_PORT: "6333"
+      RASVCX_CORPUS_DIR: data/corpus
+      RASVCX_ACTIVE_VERSION_PATH: data/active_version.json
+      RASVCX_INGEST_DB_PATH: data/ingest_jobs.sqlite
+      RASVCX_FEEDBACK_PATH: data/feedback/feedback.jsonl
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./corpus:/app/corpus:ro          # seed index (read-only)
+      - rasvcx_data:/app/data            # published KB versions, jobs, feedback
+      - hf_cache:/models/huggingface     # reranker / encoder / NLI models
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
+  rasvcx_data:
+  hf_cache:

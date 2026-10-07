@@ -1,0 +1,6 @@
+DRUG: AMLODIPINE
+Dose: 5mg–10mg daily
+Indication: Hypertension
+Adverse effects: Peripheral oedema
+Category: Prescription Medicine
+Review date: 2024-01

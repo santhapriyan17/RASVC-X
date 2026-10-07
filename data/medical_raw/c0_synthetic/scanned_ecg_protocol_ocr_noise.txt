@@ -1,0 +1,16 @@
+ECG INTERPRETATION PR0T0COL — Cardiology [OCR extracted]
+
+Rate ca|cu|ation: 300 divided by R-R interva| in |arge squares.
+Norma| rate: 60-100 bpm. Brady: <60. Tachy: >100.
+
+PR interva|: Normal 120-200ms (3-5 sma|| squares).
+PR > 200ms = 1st degree AV b|ock.
+PR varying with dropped QRS = 2nd degree Mobitz II.
+
+QRS duration: Normal < 120ms. Wide QRS = BBB or VT.
+Bundle branch: RBBB — RSR' in V1; LBBB — broad notched R in V6.
+
+QTc ca|cu|ation: QT / √(RR interva|). Norma| < 440ms men, < 460ms women.
+QTc > 500ms: HIGH risk torsades de pointes.
+
+ST e|evation: ≥1mm |imb |eads, ≥2mm precordial → STEMI protocol.

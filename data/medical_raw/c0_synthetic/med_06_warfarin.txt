@@ -1,0 +1,6 @@
+DRUG: WARFARIN
+Dose: variable
+Indication: AF/VTE
+Adverse effects: Bleeding; INR monitoring required
+Category: Prescription Medicine
+Review date: 2024-01

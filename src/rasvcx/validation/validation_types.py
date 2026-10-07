@@ -44,6 +44,17 @@ class DeterministicConfig:
     # per-candidate latency.
     max_claim_pairs_per_candidate: int = 25
 
+    # A numeric/temporal DIFFERENCE between two claims is only a
+    # contradiction when both claims state the same proposition.  Sharing a
+    # couple of words is not enough: two sentences of one drug label both
+    # mention "dose" and "daily" yet give different numbers for different
+    # indications.  This is the minimum overlap coefficient
+    # |A & B| / min(|A|, |B|) of the claims' significant non-numeric tokens
+    # required before a difference is reported as CONTRADICTION.  Pairs
+    # below it yield no deterministic verdict and are left to contextual
+    # validation and selective NLI.
+    min_proposition_overlap_for_contradiction: float = 0.5
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateGenerationConfig:

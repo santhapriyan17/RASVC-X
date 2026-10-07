@@ -74,8 +74,10 @@ class CalibrationArtifact:
 @dataclass(frozen=True, slots=True)
 class CalibrationOutcome:
     score: ConfidenceScore
-    status: str  # "calibrated" | "uncalibrated" | "unavailable"
+    status: str  # "calibrated" | "uncalibrated" | "invalidated" | "unavailable"
     reason: str | None = None
+    calibration_version: str | None = None
+    calibration_dataset_hash: str | None = None
 
 
 def _sigmoid(x: float) -> float:
@@ -118,16 +120,49 @@ class Calibrator:
     fit_platt/fit_isotonic for the offline counterpart.
     """
 
-    def __init__(self, artifact: CalibrationArtifact | None) -> None:
+    def __init__(
+        self,
+        artifact: CalibrationArtifact | None,
+        *,
+        invalid_reason: str | None = None,
+        kb_version_id: str | None = None,
+        calibration_version: str | None = None,
+        calibration_dataset_hash: str | None = None,
+    ) -> None:
+        """invalid_reason: the artifact exists but does not apply to this
+        runtime (config / prompt / model changed) -> every outcome is
+        "invalidated".  kb_version_id: the KB the artifact was fitted
+        against; a request served from another KB version is "invalidated".
+        """
         self._artifact = artifact
+        self._invalid_reason = invalid_reason
+        self._kb_version_id = kb_version_id
+        self._version = calibration_version
+        self._dataset_hash = calibration_dataset_hash
 
-    def calibrate(self, raw_score: ConfidenceScore) -> CalibrationOutcome:
+    def calibrate(
+        self, raw_score: ConfidenceScore, kb_version_id: str | None = None,
+    ) -> CalibrationOutcome:
         raw = raw_score.value
         if math.isnan(raw) or math.isinf(raw):
             raise ValueError(f"raw score must be finite, got {raw}")
 
-        if self._artifact is None:
+        if self._artifact is None and self._invalid_reason is None:
             return CalibrationOutcome(score=raw_score, status="uncalibrated", reason="no_artifact")
+        meta = {"calibration_version": self._version, "calibration_dataset_hash": self._dataset_hash}
+        if self._invalid_reason is not None:
+            return CalibrationOutcome(score=raw_score, status="invalidated",
+                                      reason=self._invalid_reason, **meta)
+        if (
+            self._kb_version_id is not None and kb_version_id is not None
+            and kb_version_id != self._kb_version_id
+        ):
+            return CalibrationOutcome(
+                score=raw_score, status="invalidated",
+                reason=f"calibration fitted on KB {self._kb_version_id}, request served from {kb_version_id}",
+                **meta,
+            )
+        assert self._artifact is not None
 
         try:
             self._artifact.validate()
@@ -148,7 +183,7 @@ class Calibrator:
             is_calibrated=True,
             calibration_method=self._artifact.method.value,
         )
-        return CalibrationOutcome(score=calibrated, status="calibrated")
+        return CalibrationOutcome(score=calibrated, status="calibrated", **meta)
 
 
 def fit_platt(

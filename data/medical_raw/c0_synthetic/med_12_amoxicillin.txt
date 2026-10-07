@@ -1,0 +1,6 @@
+DRUG: AMOXICILLIN
+Dose: 250mg–1g TDS
+Indication: Bacterial infection
+Adverse effects: Allergy, diarrhoea
+Category: Prescription Medicine
+Review date: 2024-01

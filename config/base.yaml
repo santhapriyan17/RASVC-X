@@ -1,0 +1,222 @@
+# config/base.yaml
+#
+# RASVC-X base configuration — offline_test mode (safe default).
+#
+# This file documents all configurable fields with their default values.
+# It is used directly for offline_test runs and as the reference template
+# for other profiles (research_hybrid.yaml overrides the relevant sections).
+#
+# Do NOT use this file for research or production runs.
+# Use config/research_hybrid.yaml instead.
+#
+# offline_test is never selected implicitly. Use it with:
+#   $env:RASVCX_CONFIG = "config\base.yaml"      or
+#   $env:RASVCX_EXECUTION_MODE = "offline_test"
+# Every response then carries mode.offline=true and mock_llm=true.
+#
+# SCHEMA VERSION: must match _CONFIG_SCHEMA_VERSION in config/loader.py
+schema_version: 1
+
+execution_mode: offline_test
+
+# ---------------------------------------------------------------------------
+# Corpus paths
+# ---------------------------------------------------------------------------
+corpus:
+  store_path: corpus/corpus_store.json
+  bm25_path: corpus/bm25_index.pkl
+  manifest_path: corpus/manifest.json
+  smoke_corpus_path: corpus/smoke_corpus.json
+
+# ---------------------------------------------------------------------------
+# Chunking
+# ---------------------------------------------------------------------------
+chunking:
+  strategy: fixed
+  max_tokens: 256
+  overlap: 32
+
+# ---------------------------------------------------------------------------
+# Retrieval
+# ---------------------------------------------------------------------------
+retrieval:
+  mode: bm25_only
+  bm25_top_k: 20
+  dense_top_k: 20
+  rrf_k: 60
+  rrf_top_k: 10
+  dense_model_name: sentence-transformers/all-MiniLM-L6-v2
+  qdrant_host: localhost
+  qdrant_port: 6333
+  qdrant_collection: rasvcx_chunks
+  targeted_bm25_top_k: 10
+  targeted_dense_top_k: 10
+  targeted_rrf_k: 60
+
+# ---------------------------------------------------------------------------
+# Reranking (disabled in offline_test)
+# ---------------------------------------------------------------------------
+reranker:
+  enabled: false
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  max_candidates: 30
+  batch_size: 32
+  device: null
+
+# ---------------------------------------------------------------------------
+# Sufficiency gate
+# ---------------------------------------------------------------------------
+sufficiency:
+  min_evidence_items: 2
+  min_scored_items: 0
+  min_top_rerank_score: 0.0
+  min_rerank_score_margin: 0.05
+  max_unknown_provenance_ratio_high_risk: 0.5
+  min_source_diversity_high_risk: 2
+  high_risk_score_threshold: 0.7
+
+# ---------------------------------------------------------------------------
+# NLI (disabled in offline_test)
+# ---------------------------------------------------------------------------
+nli:
+  enabled: false
+  model_name: microsoft/deberta-large-mnli
+  device: cpu
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+validation:
+  numeric_relative_tolerance: 0.01
+  min_shared_tokens_for_comparison: 2
+  max_claim_pairs_per_candidate: 25
+  max_candidates: 500
+  inconclusive_confidence_threshold: 0.6
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+verification:
+  max_claims: 200
+  max_nli_calls_per_answer: 20
+  max_fallback_evidence_candidates: 5
+  unsupported_fraction_for_partial: 0.2
+  unsupported_fraction_for_unverified: 0.5
+
+# ---------------------------------------------------------------------------
+# Confidence weights (must sum to 1.0)
+# ---------------------------------------------------------------------------
+confidence:
+  evidence_agreement: 0.20
+  claim_verification_support: 0.25
+  contradiction_penalty: 0.20
+  provenance_quality: 0.10
+  source_diversity: 0.05
+  retrieval_quality: 0.05
+  rerank_quality: 0.05
+  resolution_uncertainty_penalty: 0.10
+
+# ---------------------------------------------------------------------------
+# Decision thresholds
+# ---------------------------------------------------------------------------
+decision:
+  answer_min: 0.75
+  warning_min: 0.55
+  regenerate_min: 0.35
+  high_risk_answer_min: 0.85
+  high_risk_warning_min: 0.65
+  high_risk_regenerate_min: 0.45
+  high_risk_threshold: 0.6
+
+# ---------------------------------------------------------------------------
+# LLM — stub in offline_test (no external calls)
+# ---------------------------------------------------------------------------
+llm:
+  provider: stub
+  model_name: gemini-3.5-flash-lite
+  temperature: 0.0
+  max_tokens: 2048
+  timeout_seconds: 60.0
+  stub_response: "Based on the retrieved evidence, visiting hours are 9am to 8pm. [E1]"
+
+# ---------------------------------------------------------------------------
+# Pipeline orchestrator
+# ---------------------------------------------------------------------------
+pipeline:
+  max_corrective_attempts: 2
+  max_context_chars: 100000
+
+# ---------------------------------------------------------------------------
+# HTTP API
+# ---------------------------------------------------------------------------
+api:
+  host: "0.0.0.0"
+  port: 8000
+  max_workers: 4
+  max_queue_depth: 8
+  request_timeout_seconds: 120.0
+  max_request_bytes: 65536
+  max_query_chars: 2048
+  require_auth: false
+
+# ---------------------------------------------------------------------------
+# M17 — Ingestion pipeline defaults
+#
+# These values match IngestionSettings defaults in config/settings.py.
+# Override individual fields in environment-specific profiles.
+#
+# Upload limits:
+#   PDF / TXT / HTML / CSV / XLSX: up to 1 GB (streaming / lazy parsers)
+#   DOCX: 100 MB hard limit (full ZIP load required by python-docx)
+#   PPTX:  50 MB hard limit (full ZIP load required by python-pptx)
+#
+# Parser isolation:
+#   Each document is parsed in a subprocess (multiprocessing.Process).
+#   The subprocess is killed after parser_timeout_seconds.
+#   This is the only Windows-compatible hard-timeout mechanism.
+#
+# Job store:
+#   SQLite with WAL mode. Single Uvicorn worker only (--workers 1).
+#
+# SSRF protection:
+#   allowed_url_schemes: https only.
+#   DNS pre-flight + IPv4/IPv6 private range rejection before connection.
+#   Redirect chain re-validated at each hop (max: max_redirects).
+#
+# Override db_path via RASVCX_INGEST_DB_PATH env var.
+# Override temp_dir  via RASVCX_INGEST_TEMP_DIR  env var.
+# ---------------------------------------------------------------------------
+ingestion:
+  # Upload size limits
+  max_upload_bytes: 1073741824         # 1 GB — PDF/TXT/HTML/CSV/XLSX
+  max_upload_bytes_docx: 104857600     # 100 MB — DOCX (full load)
+  max_upload_bytes_pptx: 52428800      #  50 MB — PPTX (full load)
+
+  # Per-format page / row limits
+  max_pdf_pages: 10000
+  max_csv_rows: 10000000
+  max_xlsx_rows: 1000000
+
+  # Parser subprocess kill timeout (seconds)
+  parser_timeout_seconds: 300.0
+
+  # Job store (SQLite)
+  db_path: corpus/ingestion_jobs.db
+  max_concurrent_jobs: 2
+
+  # Temp upload staging directory (empty = OS default)
+  temp_dir: ""
+
+  # Versioned corpus publication
+  corpus_versions_dir: corpus
+  active_version_path: corpus/active_version.json
+  gc_delay_seconds: 300.0
+
+  # External source sync — SSRF-protected HTTPS only
+  max_source_response_bytes: 104857600  # 100 MB
+  source_connect_timeout_seconds: 10.0
+  source_read_timeout_seconds: 60.0
+  allowed_url_schemes:
+    - https
+  scheduled_sync_interval_seconds: 3600.0  # 1 hour; 0 = disabled
+  max_redirects: 3

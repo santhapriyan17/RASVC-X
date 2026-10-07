@@ -1,0 +1,11 @@
+SEPSIS FLUID RESUSCITATION — Alternative Protocol (Legacy v2019)
+Source: Anaesthesiology Department
+
+FLUID ADMINISTRATION
+Initial bolus: 10 mL/kg crystalloid — reassess after each bolus.
+AVOID fixed 30 mL/kg bolus; associated with pulmonary oedema.
+Vasopressors: initiate norepinephrine when MAP < 60 mmHg.
+Lactate: remeasure at 4 hours (not 2 hours) for trend.
+
+NOTE: This protocol SUPERSEDES sepsis_bundle_2024 in ICU settings.
+Antibiotic timing: within 3 hours acceptable for non-shock presentation.

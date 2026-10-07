@@ -1,0 +1,6 @@
+DRUG: METHOTREXATE
+Dose: 7.5mg–25mg weekly
+Indication: RA/psoriasis
+Adverse effects: Hepatotoxicity, folate
+Category: Prescription Medicine
+Review date: 2024-01

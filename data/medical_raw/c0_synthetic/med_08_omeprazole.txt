@@ -1,0 +1,6 @@
+DRUG: OMEPRAZOLE
+Dose: 20mg–40mg daily
+Indication: GORD/PUD
+Adverse effects: Low Mg with long-term use
+Category: Prescription Medicine
+Review date: 2024-01

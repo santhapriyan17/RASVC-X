@@ -64,11 +64,18 @@ class BM25Index:
             tokenized.append(_tokenize(text))
         return cls(chunk_ids, tokenized)
 
-    def save(self, path: Path) -> None:
+    def save(self, path: Path, extra: dict[str, object] | None = None) -> None:
+        """Persist the index. `extra` keys are stored alongside (never
+        overriding chunk_ids/bm25) so one file can carry build metadata."""
         path = Path(path)
+        payload: dict[str, object] = dict(extra or {})
+        payload.update({"chunk_ids": self._chunk_ids, "bm25": self._bm25})
         with path.open("wb") as fh:
-            pickle.dump({"chunk_ids": self._chunk_ids, "bm25": self._bm25}, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
         logger.info("BM25Index saved: %s (%d docs)", path, self._size)
+
+    def chunk_ids(self) -> list[ChunkId]:
+        return list(self._chunk_ids)
 
     @classmethod
     def load(cls, path: Path) -> "BM25Index":

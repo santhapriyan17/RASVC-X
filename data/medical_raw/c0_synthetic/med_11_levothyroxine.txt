@@ -1,0 +1,6 @@
+DRUG: LEVOTHYROXINE
+Dose: 25–200mcg daily
+Indication: Hypothyroidism
+Adverse effects: AF if over-replaced
+Category: Prescription Medicine
+Review date: 2024-01

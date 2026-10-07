@@ -1,0 +1,6 @@
+DRUG: EPLERENONE
+Dose: 25mg–50mg daily
+Indication: Post-MI HF
+Adverse effects: Hyperkalaemia
+Category: Prescription Medicine
+Review date: 2024-01

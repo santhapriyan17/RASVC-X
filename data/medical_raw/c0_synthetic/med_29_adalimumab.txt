@@ -1,0 +1,6 @@
+DRUG: ADALIMUMAB
+Dose: 40mg fortnightly
+Indication: RA/IBD
+Adverse effects: TB reactivation; screen first
+Category: Prescription Medicine
+Review date: 2024-01

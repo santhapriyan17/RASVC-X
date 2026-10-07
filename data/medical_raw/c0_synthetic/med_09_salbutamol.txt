@@ -1,0 +1,6 @@
+DRUG: SALBUTAMOL
+Dose: 100–200mcg PRN
+Indication: Asthma
+Adverse effects: Tachycardia, hypokalaemia
+Category: Prescription Medicine
+Review date: 2024-01

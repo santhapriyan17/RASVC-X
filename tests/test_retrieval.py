@@ -177,16 +177,24 @@ class _FakeScoredPoint:
 
 
 class _FakeQdrantClient:
-    """Fake QdrantClient with controllable failure modes."""
+    """Fake QdrantClient with controllable failure modes.
 
-    def __init__(self, host=None, port=None, prefer_grpc=False, grpc_port=None) -> None:
-        self.host = host
-        self.port = port
+    Mirrors the qdrant-client API that dense.py actually calls
+    (query_points / count / get_collections / create_collection /
+    delete_collection / upsert).  qdrant-client removed the old search()
+    method, so the fake does not offer one either: code that still called
+    it would fail here exactly as it fails against the real client.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.init_args = args
+        self.init_kwargs = kwargs
         self._existing_collections: list = []
         self._search_results: list = []
         self._raise_on_search = False
         self._raise_on_get_collections = False
         self.upserted_points: list = []
+        self.query_calls = 0
 
     def get_collections(self):
         if self._raise_on_get_collections:
@@ -195,14 +203,28 @@ class _FakeQdrantClient:
 
     def create_collection(self, collection_name, vectors_config):
         self._existing_collections.append(collection_name)
+        self.upserted_points = []
+
+    def delete_collection(self, collection_name):
+        if collection_name in self._existing_collections:
+            self._existing_collections.remove(collection_name)
 
     def upsert(self, collection_name, points):
         self.upserted_points.extend(points)
 
-    def search(self, collection_name, query_vector, limit, with_payload=True):
+    def count(self, collection_name, exact=True):
+        class _Count:
+            count = len(self.upserted_points)
+        return _Count()
+
+    def query_points(self, collection_name, query, limit, with_payload=True):
+        self.query_calls += 1
         if self._raise_on_search:
             raise RuntimeError("simulated Qdrant search failure")
-        return self._search_results[:limit]
+
+        class _Response:
+            points = self._search_results[:limit]
+        return _Response()
 
 
 class _FakeDistance:
@@ -241,9 +263,8 @@ def fake_qdrant_client(monkeypatch: pytest.MonkeyPatch) -> _FakeQdrantClient:
             created["client"] = self
 
     monkeypatch.setattr(dense_mod, "QdrantClient", _Capturing, raising=False)
-    retriever = DenseRetriever(
-        model_name="fake-model", qdrant_host="localhost", qdrant_port=6333,
-        collection_name="rasvcx_chunks",
+    retriever = DenseRetriever.build(
+        "fake-model", "localhost", 6333, "rasvcx_chunks",
     )
     client = created["client"]
     client._owning_retriever = retriever
@@ -297,6 +318,41 @@ class TestDenseRetriever:
     ) -> None:
         fake_qdrant_client._raise_on_search = True  # would blow up if called
         assert dense_retriever.query("   ", top_k=5) == []
+        assert fake_qdrant_client.query_calls == 0
+
+    def test_query_uses_the_current_qdrant_api(
+        self, dense_retriever: DenseRetriever, fake_qdrant_client: _FakeQdrantClient
+    ) -> None:
+        dense_retriever.query("aspirin", top_k=3)
+        assert fake_qdrant_client.query_calls == 1
+
+    def test_retrievers_for_other_collections_share_one_encoder(
+        self, dense_retriever: DenseRetriever
+    ) -> None:
+        before = _FakeEncoder.init_calls
+        other = dense_retriever.backend.retriever("rasvcx_chunks_v_other")
+        other.query("q", top_k=1)
+        assert other.collection_name == "rasvcx_chunks_v_other"
+        assert _FakeEncoder.init_calls == before
+
+    def test_build_collection_verifies_point_count(
+        self, dense_retriever: DenseRetriever, fake_qdrant_client: _FakeQdrantClient
+    ) -> None:
+        backend = dense_retriever.backend
+        assert backend.build_collection("c1", [(ChunkId("a"), "t1"), (ChunkId("b"), "t2")]) == 2
+        assert backend.collection_count("c1") == 2
+        assert backend.collection_count("missing") is None
+
+    def test_build_collection_rejects_partial_index(
+        self, dense_retriever: DenseRetriever, fake_qdrant_client: _FakeQdrantClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A backend that silently drops points must not yield a publishable index.
+        monkeypatch.setattr(fake_qdrant_client, "upsert", lambda collection_name, points: None)
+        with pytest.raises(QdrantUnavailableError, match="expected 2"):
+            dense_retriever.backend.build_collection(
+                "c1", [(ChunkId("a"), "t1"), (ChunkId("b"), "t2")]
+            )
 
     def test_invalid_top_k_raises(self, dense_retriever: DenseRetriever) -> None:
         with pytest.raises(ValueError):
@@ -628,7 +684,7 @@ class TestTargetedRetrieval:
         assert merged_a.bm25_score is None, "must not fabricate a bm25_score from a prior rrf_score"
         assert merged_a.dense_score == 0.77, "original dense provenance must be preserved"
 
-    def test_dense_unavailable_falls_back_to_bm25_only(self) -> None:
+    def test_dense_unavailable_is_reported_not_hidden(self) -> None:
         existing = []
         bm25 = _StubBM25Index(results=[BM25Result(chunk_id=ChunkId("x"), score=2.0)])
         dense = _StubDenseRetriever(raise_unavailable=True)
@@ -637,6 +693,17 @@ class TestTargetedRetrieval:
         )
         assert ChunkId("x") in {r.chunk_id for r in result.merged_results}
         assert result.targeted_dense_count == 0
+        # The BM25-only supplementary pass is labelled as degraded.
+        assert result.dense_error is not None
+        assert "QdrantUnavailableError" in result.dense_error
+
+    def test_dense_available_reports_no_error(self) -> None:
+        bm25 = _StubBM25Index(results=[BM25Result(chunk_id=ChunkId("x"), score=2.0)])
+        dense = _StubDenseRetriever(results=[])
+        result = run_targeted_retrieval(
+            "query", [], bm25, dense, TargetedRetrievalConfig(augment_query=False)
+        )
+        assert result.dense_error is None
 
     def test_conditional_usage_is_caller_responsibility(self) -> None:
         # targeted_retrieval itself has no sufficiency-gate awareness; it

@@ -1,0 +1,6 @@
+DRUG: METRONIDAZOLE
+Dose: 400mg TDS
+Indication: Anaerobes/C.diff
+Adverse effects: Metallic taste, alcohol CI
+Category: Prescription Medicine
+Review date: 2024-01

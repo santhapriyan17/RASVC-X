@@ -1,11 +1,13 @@
-﻿__pycache__/
+__pycache__/
 *.py[cod]
 *.pyo
+*.egg-info/
 
 .venv/
 venv/
 env/
 
+# Secrets: never commit. .env.example is the tracked template.
 .env
 
 .pytest_cache/
@@ -20,9 +22,37 @@ env/
 data/raw/*
 data/processed/*
 data/evaluation/*
+# ...except the demo safety-regression suite and its expected-KB identity,
+# which the benchmark scripts need (scripts/run_comparison.py, stability_run.py)
+!data/evaluation/demo_dataset.json
+!data/evaluation/demo_dataset.kb.json
 
 models/*
 logs/*
 
 .DS_Store
 Thumbs.db
+
+# Runtime state (knowledge-base versions, job store, uploads, feedback)
+.runtime/
+data/corpus/
+data/qdrant/
+data/active_version.json
+data/*.sqlite*
+data/feedback/
+data/eval_results/
+corpus/v_*/
+corpus/active_version.json
+corpus/*.db*
+eval_output/
+
+# Frontend build artefacts
+frontend/node_modules/
+frontend/dist/
+
+# Demonstration knowledge base (rebuild with scripts/build_demo_kb.py)
+corpus_demo/
+data/demo_kb/
+data/demo_qdrant/
+data/demo_qdrant_dev/
+data/corpus_input/demo_corpus.json

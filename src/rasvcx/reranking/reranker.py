@@ -48,6 +48,16 @@ class RerankingServiceConfig:
         default_factory=CrossEncoderConfig
     )
     pre_sort_by_retrieval: bool = True
+    # Evidence pruning.  When set, candidates the cross-encoder scores below
+    # this value are dropped from the bundle -- provided the best candidate
+    # is itself at or above it, and never below min_kept items.  Retrieval
+    # returns a fixed top-k, so most of the tail is unrelated text; keeping
+    # it adds irrelevant claims to validation, irrelevant passages to the
+    # prompt, and noise to every evidence-level signal.  None disables
+    # pruning.  When the best candidate is below the threshold nothing is
+    # dropped: the sufficiency gate must see that the evidence is weak.
+    min_relevance_score: float | None = None
+    min_kept: int = 2
 
 
 class RerankingService:
@@ -105,12 +115,18 @@ class RerankingService:
 
         try:
             results = self._reranker.rerank(query, candidates)
-        except Exception:  # noqa: BLE001 -- graceful degradation, never crash
+        except Exception as exc:  # noqa: BLE001 -- never crash the request
             logger.exception(
                 "Cross-encoder reranking failed; leaving rerank_score unset "
                 "for all %d evidence item(s).",
                 len(items),
             )
+            # Not a silent fallback: the failure is recorded on the bundle
+            # so the orchestrator reports the reranking stage as failed.
+            bundle.retrieval_trace = {
+                **bundle.retrieval_trace,
+                "rerank_error": f"{type(exc).__name__}: {exc}",
+            }
             return
 
         score_by_chunk_id = {r.chunk_id: r.rerank_score for r in results}
@@ -125,6 +141,21 @@ class RerankingService:
             scored_items.append(dataclasses.replace(item, rerank_score=score))
 
         scored_items.sort(key=lambda it: (-it.rerank_score, it.chunk_id))  # type: ignore[operator]
+
+        threshold = self._config.min_relevance_score
+        if threshold is not None and scored_items and scored_items[0].rerank_score >= threshold:
+            keep = max(
+                self._config.min_kept,
+                sum(1 for it in scored_items if it.rerank_score >= threshold),
+            )
+            dropped = len(scored_items) - keep + len(unscored_items)
+            if dropped > 0:
+                scored_items = scored_items[:keep]
+                unscored_items = []
+                bundle.retrieval_trace = {
+                    **bundle.retrieval_trace,
+                    "pruned_low_relevance": int(bundle.retrieval_trace.get("pruned_low_relevance", 0)) + dropped,
+                }
 
         ordered = scored_items + unscored_items
         bundle.evidence_items = {it.item_id: it for it in ordered}

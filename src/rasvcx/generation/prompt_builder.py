@@ -72,9 +72,35 @@ narrow context, say so. Do not present uncertain information as definitive.
 
 7. NO CLINICAL DECISIONS. You provide information based on retrieved \
 evidence. You do not make clinical recommendations, diagnoses, or \
-treatment decisions. Always advise consulting a qualified healthcare \
-professional.\
+treatment decisions. Do not add a disclaimer or advice to consult a \
+professional: the application displays that notice itself, and an uncited \
+sentence in your answer would be reported as an unsupported claim.
+
+8. FORMAT FOR VERIFICATION. Every sentence of your answer is checked \
+against the evidence individually, so write plain prose in complete \
+sentences. State one fact per sentence and end the sentence with its \
+citation, e.g. "The label lists community-acquired pneumonia as an \
+indication [E1]." Do not use markdown, headings, bullet or numbered \
+lists, bold text, or tables. Do not add sentences that state no fact from \
+the evidence. Keep the answer focused on what was asked.
+
+9. RESPECT SOURCE STATUS. Each evidence block has a status attribute \
+declared by the knowledge base. Never present content from a block whose \
+status is "withdrawn" or "superseded" as current guidance; answer from the \
+current evidence, and if you mention the older content, say that it was \
+replaced. "unknown" means no status was declared.\
 """
+
+
+def _prompt_version() -> str:
+    import hashlib
+
+    return "sys-" + hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+
+
+#: Identifies the generation prompt template; changes whenever the system
+#: prompt text changes.  Recorded with every response and benchmark run.
+PROMPT_VERSION = _prompt_version()
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +185,25 @@ class PromptBuilder:
         query: QueryRequest,
         bundle: EvidenceBundle,
         validation_summary: ValidationSummary | None = None,
+        verification_feedback: str | None = None,
     ) -> PromptBuildResult:
         """Build the system and user prompts.
 
         Deterministic: same inputs → same output, byte-for-byte.
         All evidence is included. EvidenceBundle is read-only.
+
+        Args:
+            query:                 The user's question.
+            bundle:                Validated evidence (read-only).
+            validation_summary:    M8 conflict/resolution info, or None.
+            verification_feedback: Optional repair context derived from
+                M9 verification findings on a previous generation
+                attempt.  When provided, it is appended as a
+                REPAIR INSTRUCTIONS section in the user prompt so the
+                model can address specific verification failures
+                (unsupported claims, citation errors, mismatches).
+                When None (the default), the prompt is identical to the
+                non-repair path — all existing callers are unaffected.
         """
         system_prompt = _SYSTEM_PROMPT
 
@@ -185,6 +225,16 @@ class PromptBuilder:
             if conflict_text:
                 sections.append(conflict_text)
 
+        # 4. Repair instructions (only on corrective REPAIR loops, when
+        #    the orchestrator supplies verification feedback derived from
+        #    M9's actual findings)
+        if verification_feedback:
+            sections.append(
+                "REPAIR INSTRUCTIONS — Your previous answer had verification "
+                "issues. Address the following problems while preserving "
+                "correct, well-cited claims:\n" + verification_feedback
+            )
+
         user_prompt = "\n\n".join(sections)
         total_chars = len(system_prompt) + len(user_prompt)
 
@@ -196,6 +246,7 @@ class PromptBuilder:
 
 
 __all__ = [
+    "PROMPT_VERSION",
     "PromptBuilder",
     "PromptBuildResult",
 ]

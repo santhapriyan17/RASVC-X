@@ -25,6 +25,7 @@ Design constraints:
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -139,6 +140,12 @@ def parse_date(raw: "str | object") -> ParsedDate:
             original=None,
         )
 
+    if isinstance(raw, str):
+        # Pure function of the string; ParsedDate is frozen.  Memoized:
+        # the same few provenance dates were re-parsed with strptime for
+        # every candidate pair (~28k strptime calls for 10 queries).
+        return _parse_date_str(raw)
+
     if not isinstance(raw, str):
         # Defensive: unexpected type treated as unparseable, not UNKNOWN.
         return ParsedDate(
@@ -149,7 +156,13 @@ def parse_date(raw: "str | object") -> ParsedDate:
             as_date=None,
             original=str(raw) if raw is not None else "",
         )
+    raise AssertionError("unreachable")  # pragma: no cover
 
+
+@functools.lru_cache(
+    maxsize=8192 if __import__("os").environ.get("RASVCX_M8_TEXT_CACHE", "1") != "0" else 0
+)
+def _parse_date_str(raw: str) -> ParsedDate:
     cleaned = raw.strip()
     if not cleaned:
         return ParsedDate(

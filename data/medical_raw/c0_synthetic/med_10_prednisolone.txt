@@ -1,0 +1,6 @@
+DRUG: PREDNISOLONE
+Dose: 5mg–60mg daily
+Indication: Inflammation
+Adverse effects: Cushing's, osteoporosis
+Category: Prescription Medicine
+Review date: 2024-01

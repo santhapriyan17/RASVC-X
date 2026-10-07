@@ -1,0 +1,6 @@
+DRUG: AZITHROMYCIN
+Dose: 500mg OD 3d
+Indication: LRTI/CAP
+Adverse effects: QT prolongation
+Category: Prescription Medicine
+Review date: 2024-01

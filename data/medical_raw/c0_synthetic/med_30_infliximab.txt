@@ -1,0 +1,6 @@
+DRUG: INFLIXIMAB
+Dose: 3–10mg/kg IV
+Indication: IBD/RA
+Adverse effects: Infusion reaction; TB screen
+Category: Prescription Medicine
+Review date: 2024-01
